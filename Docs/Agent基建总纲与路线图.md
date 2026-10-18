@@ -1,4 +1,4 @@
-> **副本说明**:本文为 DevPilot 仓库(`~/Desktop/DevPilot/Docs/`)的同步副本,源头与后续修订在 DevPilot 仓库。两项目关系见本仓库根 [README.md](../README.md)——本总纲覆盖两线总排期与两仓库代码边界。
+> **副本说明**:本文为 DevPilot 仓库(`~/Desktop/DevPilot/Docs/`)的同步副本,源头与后续修订在 DevPilot 仓库。三项目关系见本仓库根 [README.md](../README.md)——本总纲覆盖两线总排期与三仓库代码边界。
 
 # Agent 基建总纲与路线图(mosh 线 × daemon/relay 线)
 
@@ -49,7 +49,7 @@ mosh 线 ──S1(OCB 裁决,阻塞)+S3(Spectty 尽调,阻塞)──▶ M0 闸�
 
 - **依赖方向**:mosh 线被 S1/S3 两个阻塞 spike 卡头,闸门通过才进实现;daemon+relay 线零外部依赖。
 - **排期结论**:daemon+relay 先行全速开工;mosh spike 并行跑(1-1.5 人周即见分晓),通过则无缝接 M1。
-- **仓库落位**:daemon+relay 线的 Go 代码(daemon、relay、协议类型库)落**独立仓库 DevPilot-Hook**;App 侧接入与全部 mosh 线代码落本仓库;文档源头在 DevPilot/Docs,DevPilot-Hook/Docs 持有同步副本,两项目关系以 DevPilot-Hook 根 README 为准。
+- **仓库落位(2026-10-18 定为三仓库)**:**DevPilot**(本仓库)= iOS App(App 侧接入 + 全部 mosh 线);**DevPilot-Hook** = hook daemon(Go,用户开发机);**DevPilot-APNS** = 云端中继 relay(Go,VPS,持 `pkg/wire` 协议类型库,daemon go.mod 引用);线上 WSS 协议是三端唯一契约。文档源头在 DevPilot/Docs,两 Go 仓库 Docs 持同步副本;三项目关系以 DevPilot-APNS 根 README 为准。
 - **交叉点(共享资源,接口即契约)**:
   1. **影子终端快照**:mosh 线的自研 SSP 状态模型副产品,供收件箱预览与会话缩略图——relay 线的收件箱 UI 预留快照位,mosh 未上线时留空;
   2. **收件箱**:relay 线建(五事件模型),mosh 线不另起炉灶;
@@ -83,6 +83,8 @@ spike 期    mosh:S1/S2/S3/S4(≈1-1.5 人周)          daemon:无 spike,直接 
 ```
 
 两线并行时的唯一人员约束:通知/Live Activity/会话模型三处归 relay 线所有,mosh 线不进这三处(§3 交叉点契约)。
+
+仓库归属:`pkg/wire` 与 D3(中继实现)落 DevPilot-APNS(R0-R3 见其 `Docs/中继服务端与APNs推送设计.md`);D1/D2/D5 daemon 侧落 DevPilot-Hook。
 
 ## 6. 商业化门控建议
 
@@ -139,6 +141,7 @@ spike 期    mosh:S1/S2/S3/S4(≈1-1.5 人周)          daemon:无 spike,直接 
 1. [Mosh客户端自研设计评审.md](Mosh客户端自研设计评审.md) —— 协议拆解/净室策略/架构集成/spike 判据
 2. [DevPilot-Hook守护进程与推送中继设计.md](DevPilot-Hook守护进程与推送中继设计.md) —— daemon/中继/APNs 原理/审批闭环
 3. [Agent基建总纲与路线图.md](Agent基建总纲与路线图.md) —— 本文档
+4. DevPilot-APNS 仓库 `Docs/中继服务端与APNs推送设计.md` —— 中继实现级设计(2026-10-18 拆仓新增;两 Go 仓库 Docs 各持本清单文档的同步副本)
 
 用户评审通过后的动作序列(spike 任务卡拆解):
 

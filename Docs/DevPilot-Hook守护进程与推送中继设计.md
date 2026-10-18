@@ -1,11 +1,11 @@
-> **副本说明**:本文为 DevPilot 仓库(`~/Desktop/DevPilot/Docs/`)的同步副本,源头与后续修订在 DevPilot 仓库。两项目关系见本仓库根 [README.md](../README.md)——**本文是本仓库(daemon+relay)的核心设计**,Go 实现落本仓库,App 侧接入落 DevPilot。
+> **副本说明**:本文为 DevPilot 仓库(`~/Desktop/DevPilot/Docs/`)的同步副本,源头与后续修订在 DevPilot 仓库。三项目关系见本仓库根 [README.md](../README.md)——**本文是本仓库(daemon)的核心设计**;relay 中继已拆至 DevPilot-APNS(实现级细化见其 `Docs/中继服务端与APNs推送设计.md`),App 侧接入落 DevPilot。
 
 # DevPilot Hook 守护进程与推送中继设计(daemon + relay)
 
 > 状态:评审稿 v1(2026-10-18)|性质:决策 + 设计文档,**本期不含实现**
 > 关联:[Agent基建总纲与路线图.md](Agent基建总纲与路线图.md)|[Mosh客户端自研设计评审.md](Mosh客户端自研设计评审.md)
 > 对标:moshi-hook(Go 单二进制、win/mac/linux、WebSocket 连云端中继)
-> 仓库落位(2026-10-18):daemon 与 relay 的 **Go 实现落独立仓库 DevPilot-Hook**(协议类型库同仓);本仓库(DevPilot)承担 App 侧接入(RelayChannel 模型/云端通道页/收件箱/Live Activity push token 上报,§11)。文档源头在 DevPilot/Docs,DevPilot-Hook/Docs 持有同步副本。
+> 仓库落位(2026-10-18 更新为三仓库):daemon 的 Go 实现落 **DevPilot-Hook**;relay 中继的 Go 实现落 **DevPilot-APNS**(实现级设计见该仓库 `Docs/中继服务端与APNs推送设计.md`,本文 §8 为概要);本仓库(DevPilot)承担 App 侧接入(RelayChannel 模型/云端通道页/收件箱/Live Activity push token 上报,§11)。文档源头在 DevPilot/Docs,两 Go 仓库 Docs 持同步副本。
 
 ---
 
@@ -260,8 +260,10 @@ APNs **免费、无限量**(苹果按 App 质量治理而非收费);真实成本
 
 | 方案 | 优势 | 劣势 | 判定 |
 |---|---|---|---|
-| **单 VPS Go 二进制** ✅ | 与 daemon **共享协议类型库**(同一 Go module,事件结构零漂移);单租户数据完全自持(对齐 DevPilot 直连隐私哲学);运维面 = 一个 systemd unit | 自己管 TLS/续期/监控 | **推荐** |
+| **单 VPS Go 二进制** ✅ | 与 daemon **共享协议类型库**(同语言,`pkg/wire` 经 go.mod 引用,事件结构零漂移);单租户数据完全自持(对齐 DevPilot 直连隐私哲学);运维面 = 一个 systemd unit | 自己管 TLS/续期/监控 | **推荐** |
 | Cloudflare Workers + Durable Objects | 免运维、边缘低延迟;仓库已有 wrangler.jsonc 先例(隐私政策页) | JS/TS 重写协议类型(与 Go daemon 双份维护);DO 计费随连接数走 | 备选,量起来再迁 |
+
+**仓库落位**:relay 实现落 DevPilot-APNS 仓库(2026-10-18 拆分);本节为架构概要,实现级细化(代码骨架/WSS 包封/APNs 客户端/投递语义)见该仓库 `Docs/中继服务端与APNs推送设计.md`。
 
 ### 8.2 组件
 
@@ -391,10 +393,10 @@ updatedAt: Date    //              ← 中继打点时间
 
 | 阶段 | 内容 | 人周 |
 |---|---|---|
-| D0 | 协议类型库定稿(Go module:事件/审批/配对消息)+ 部署形态拍板 | 0.5 |
-| D1 | daemon 核心:网关/hook 适配/配置合并卫生/事件聚合限流 | 2-2.5 |
+| D0 | 协议类型库定稿(`pkg/wire` 落 DevPilot-APNS 仓库,daemon go.mod 引用)+ 部署形态拍板 | 0.5 |
+| D1 | daemon 核心:网关/hook 适配/配置合并卫生/事件聚合限流(落 DevPilot-Hook)| 2-2.5 |
 | D2 | 配对安全 + WSS 双端 + 幂等与离线缓冲 | 1-1.5 |
-| D3 | 中继服务端:路由表/APNs 客户端/410 剪枝 + 部署 | 2 |
+| D3 | 中继服务端:路由表/APNs 客户端/410 剪枝 + 部署(落 DevPilot-APNS,细化见其 R0-R3)| 2 |
 | D4 | App 侧:云端通道页/收件箱/Live Activity 远程更新 | 2-2.5 |
 | D5 | 审批闭环端到端 + doctor + 压测(断连重放/限流验证) | 1.5-2 |
 
