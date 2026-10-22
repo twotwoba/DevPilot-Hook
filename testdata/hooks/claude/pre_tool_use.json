@@ -1,0 +1,13 @@
+{
+  "session_id": "sess_test_001",
+  "transcript_path": "/Users/eric/.claude/projects/-Users-eric-demo/sess_test_001.jsonl",
+  "cwd": "/Users/eric/Dev/demo-app",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm test",
+    "description": "Run the test suite"
+  },
+  "tool_use_id": "toolu_01ABC"
+}

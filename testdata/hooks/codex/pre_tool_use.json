@@ -1,0 +1,11 @@
+{
+  "sessionId": "sess_codex_001",
+  "transcript_path": "/Users/eric/.codex/sessions/sess_codex_001.jsonl",
+  "cwd": "/Users/eric/Dev/cli-tool",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "shell",
+  "tool_input": {
+    "command": "go test ./..."
+  },
+  "tool_use_id": "call_01XYZ"
+}

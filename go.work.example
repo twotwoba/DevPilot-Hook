@@ -1,0 +1,14 @@
+go 1.24
+
+// 本地联调用的工作区示例。
+// 复制到本仓库根目录并改名为 go.work（已被 .gitignore 忽略）：
+//   cp go.work.example go.work
+// 这样 `use .` 指向本仓库，`../DevPilot-APNS` 指向同级仓库。
+use (
+	.
+	../DevPilot-APNS
+)
+
+// 精确版本替换：Go 不允许对工作区模块使用「替换所有版本」。
+// 版本号需与 go.mod 中 require 的版本保持一致。
+replace github.com/twotwoba/DevPilot-APNS v0.1.0 => ../DevPilot-APNS

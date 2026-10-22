@@ -22,10 +22,79 @@ Claude Code/Codex hooks
 
 设计要点:审批链路任何环节超时 = 无决策回落终端原生询问(只会多问一次,不会放行);云通道只传「通知里你看得到的」摘要白名单;对标竞品 moshi-hook。
 
+## 安装
+
+只支持 **macOS 与 Linux**（与 moshi-hook 的范围一致，不做 Windows）。
+
+```bash
+# macOS（Homebrew，与 moshi 相同的 tap + install 两步）
+brew tap twotwoba/devpilot
+brew install --cask devpilot-hook
+
+# 也可以一条命令（Homebrew 会自动 clone tap）
+brew install --cask twotwoba/devpilot/devpilot-hook
+
+# macOS / Linux（脚本：校验 SHA-256，装到 ~/.local/bin）
+curl -fsSL https://raw.githubusercontent.com/twotwoba/DevPilot-Hook/main/install.sh | sh
+```
+
+> `twotwoba/devpilot` 是第三方 tap，对应 GitHub 仓库
+> `twotwoba/homebrew-devpilot`；它不在 Homebrew 官方仓库里。moshi 的
+> `rjyo/moshi` 同理，对应 `rjyo/homebrew-moshi`。tap 只需添加一次，
+> 之后 `brew upgrade --cask devpilot-hook` 即可。
+
+Linux 还可以直接下载 Releases 里的 `.deb` / `.rpm` / `.tar.gz`。
+
+```bash
+devpilot-hook install            # 写入 Claude Code / Codex hooks（只增改自家条目）
+devpilot-hook service install    # launchd / systemd user 自启
+devpilot-hook pair --relay https://relay.example.com
+devpilot-hook doctor             # 配置、hooks、网关、relay、队列自检
+devpilot-hook serve              # 前台运行；service 管理器也会执行它
+```
+
+`uninstall` 只删除自家 hooks 条目与自启配置，`--purge` 才会清空状态目录。
+
+## 开发与测试
+
+```bash
+cp go.work.example go.work   # 需要同级 DevPilot-APNS 源码
+go test -race ./...
+go test -race -tags=e2e ./test/e2e -v   # 需要同级 DevPilot-APNS，现场编译两个二进制
+make build                    # ./bin/devpilot-hook
+```
+
+E2E 覆盖：真实 `hook` 子进程 → daemon → relay（APNs Mock）→ 假 App WSS，
+验证 allow / deny 回流、重复决策 first-wins、超时无输出（绝不超时放行）、WAL 清空。
+
+## 发布
+
+本仓库依赖 DevPilot-APNS 的 `pkg/wire`，发布前必须先给姊妹仓库打 tag：
+
+```bash
+# 1. DevPilot-APNS：先发布 v0.1.0（relay + pkg/wire）
+# 2. 本仓库：把校验和写入 go.sum（工作区的 replace 不参与此步骤）
+GOWORK=off go mod tidy
+# 3. 打 tag 触发 .github/workflows/release.yml（GoReleaser）
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+GoReleaser 只需要一个额外 Secret：`HOMEBREW_TAP_TOKEN`（推
+`twotwoba/homebrew-devpilot`）。先建好这个空仓库，并给 PAT 授予
+`Contents: Read and write`。
+
+发布使用非 draft release：cask 清单引用 release 资产，草案期间外部下载
+会 404。
+
 ## 当前状态
 
-- ✅ 设计文档(2026-10-18,评审稿 v1)
-- ⬜ 实现未开工:本仓库承担 D1/D2/D5(daemon 侧);`pkg/wire` 与 relay(R0-R3)在 DevPilot-APNS。两仓库均无外部阻塞,可并行开工
+- ✅ daemon 实现：Claude Code / Codex 适配器、本地网关（127.0.0.1 + Bearer + 拒绝 Origin）、
+  审批阻塞与决策回流、聚合限流、JSONL WAL（fsync / 重放 / 压实）、配对、
+  doctor、macOS/Linux 自启
+- ✅ 端到端测试（`-tags=e2e`）与 macOS/Linux CI 矩阵
+- ✅ 分发：GoReleaser（Homebrew Cask / deb+rpm）、`install.sh`
+- ⬜ iOS 侧 L3 接入（下一轮）
+- ⬜ 真机 APNs sandbox 验证（需在 Apple Developer 创建 `.p8` 后执行）
 
 ## 文档(源头在 DevPilot 仓库 `Docs/`,此处为同步副本)
 

@@ -1,0 +1,8 @@
+{
+  "session_id": "sess_test_001",
+  "transcript_path": "/Users/eric/.claude/projects/-Users-eric-demo/sess_test_001.jsonl",
+  "cwd": "/Users/eric/Dev/demo-app",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "测试全部通过，已经提交。"
+}

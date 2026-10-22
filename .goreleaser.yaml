@@ -1,0 +1,79 @@
+# GoReleaser v2 —— devpilot-hook 的跨平台构建与分发。
+#
+# 发布前置条件：
+#   1. DevPilot-APNS 已打 tag（pkg/wire 是本仓库的依赖）；
+#   2. 仓库 Secrets 提供 HOMEBREW_TAP_TOKEN（推 twotwoba/homebrew-devpilot）；
+#   3. tag 形如 v0.1.0。
+version: 2
+
+project_name: devpilot-hook
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: devpilot-hook
+    main: ./cmd/devpilot-hook
+    binary: devpilot-hook
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/twotwoba/DevPilot-Hook/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# macOS：Cask 适合分发预编译 CLI。未签名版本需要去掉 quarantine 才能运行。
+homebrew_casks:
+  - name: devpilot-hook
+    repository:
+      owner: twotwoba
+      name: homebrew-devpilot
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/twotwoba/DevPilot-Hook
+    description: DevPilot hook daemon for Claude Code / Codex
+    binaries:
+      - devpilot-hook
+    hooks:
+      post:
+        install: |
+          # cask 也会在 Linux 的 Homebrew 上生成安装块，而 Linux 没有 xattr。
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/devpilot-hook"]
+          end
+
+# Linux：deb / rpm 便于服务器与桌面无人值守安装。
+nfpms:
+  - id: linux-packages
+    package_name: devpilot-hook
+    vendor: twotwoba
+    homepage: https://github.com/twotwoba/DevPilot-Hook
+    maintainer: twotwoba
+    description: DevPilot hook daemon for Claude Code / Codex
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin
+
+release:
+  # 不能是 draft：cask 清单指向 release 资产，
+  # 草案状态下外部下载会 404，用户装到一半失败。
+  draft: false
+  footer: |
+    安装方式见 README（Homebrew Cask / install.sh / deb+rpm）。

@@ -1,0 +1,19 @@
+# 本地 Go 工作区（含姊妹仓库路径），不提交
+go.work
+go.work.sum
+
+# 构建产物与本地状态
+/bin/
+/dist/
+*.test
+*.out
+
+# 部署密钥绝不入库
+deploy/secrets/*.p8
+deploy/secrets/*.pem
+deploy/.env
+
+# 编辑器
+.DS_Store
+.idea/
+.vscode/
