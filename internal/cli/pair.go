@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/twotwoba/DevPilot-Hook/internal/config"
 	"github.com/twotwoba/DevPilot-Hook/internal/id"
@@ -31,8 +34,10 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var dir, relay string
+	var noQR bool
 	pathsFlag(fs, &dir)
-	fs.StringVar(&relay, "relay", "", "relay 地址，例如 https://relay.example.com")
+	fs.StringVar(&relay, "relay", "", "relay 地址（缺省使用官方托管中继）")
+	fs.BoolVar(&noQR, "no-qr", false, "不在终端渲染配对二维码")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -47,14 +52,7 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	cfg.EnsureIdentity()
-	if relay == "" {
-		relay = cfg.RelayURL
-	}
-	relay = strings.TrimRight(strings.TrimSpace(relay), "/")
-	if relay == "" {
-		fmt.Fprintln(stderr, "缺少 --relay（或先写入 config.json 的 relay_url）")
-		return 2
-	}
+	relay = resolveRelay(relay, cfg.RelayURL)
 
 	credential, secret := ensureCredential(cfg)
 	code, err := pairingCode()
@@ -100,12 +98,49 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintln(stdout, "配对会话已创建，请在 15 分钟内在 DevPilot App 中输入以下配对码：")
+	fmt.Fprintln(stdout, "配对会话已创建（15 分钟内有效），在 DevPilot App 中扫码或输入配对码：")
 	fmt.Fprintln(stdout)
+	if !noQR {
+		renderPairQR(stdout, pairQRPayload(relay, code))
+	}
 	fmt.Fprintf(stdout, "    %s\n\n", code)
 	fmt.Fprintf(stdout, "daemon_id: %s\n", cfg.DaemonID)
 	fmt.Fprintf(stdout, "relay:     %s\n", relay)
 	return 0
+}
+
+// resolveRelay 回退链:--relay > config.json 的 relay_url > 官方托管中继。
+func resolveRelay(flagVal, saved string) string {
+	switch {
+	case strings.TrimSpace(flagVal) != "":
+		return strings.TrimRight(strings.TrimSpace(flagVal), "/")
+	case strings.TrimSpace(saved) != "":
+		return strings.TrimRight(strings.TrimSpace(saved), "/")
+	default:
+		return config.DefaultRelayURL
+	}
+}
+
+// pairQRPayload 拼装自包含配对链接,App 扫码即可完成配对
+// (自部署 relay 非默认地址也能扫,地址编在 payload 里)。
+func pairQRPayload(relayURL, code string) string {
+	q := url.Values{}
+	q.Set("relay", relayURL)
+	q.Set("code", code)
+	return "devpilot://pair?v=1&" + q.Encode()
+}
+
+// renderPairQR 把 payload 渲染成终端半块字符画;
+// payload 由本地拼装,渲染失败静默降级(配对码文本始终在下方)。
+func renderPairQR(w io.Writer, payload string) {
+	qr, err := qrcode.New(payload, qrcode.Low)
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(strings.TrimRight(qr.ToString(false), "\n"), "\n") {
+		fmt.Fprintf(w, "    %s\n", line)
+	}
+	fmt.Fprintln(w)
 }
 
 func runUnpair(args []string, stdout, stderr io.Writer) int {
@@ -126,6 +161,14 @@ func runUnpair(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// 尽力吊销 relay 侧数据(级联删设备、收件箱、待审批等)。
+	// 任何失败都静默忽略:relay 可能未升级出该端点(404),也可能本就离线——
+	// 吊销不阻塞本地解绑,凭据本身即刻失效。
+	if cfg.DaemonID != "" && cfg.DaemonCredential != "" && cfg.RelayURL != "" {
+		if ok := revokeDaemon(cfg.RelayURL, cfg.DaemonCredential); ok {
+			fmt.Fprintln(stdout, "relay 侧数据已吊销")
+		}
+	}
 	// 同时清空 daemon_id：relay 侧凭据轮换必须出示旧凭据，
 	// 本地若保留旧 daemon_id 又丢掉凭据，将永远无法再次配对。
 	cfg.DaemonID = ""
@@ -136,6 +179,24 @@ func runUnpair(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "已解除本机与 relay 的配对；下次 pair 会生成新的 daemon_id")
 	return 0
+}
+
+// revokeDaemon best-effort 调 DELETE /v1/daemon;仅 2xx 视为成功。
+func revokeDaemon(relayURL, credential string) bool {
+	req, err := http.NewRequest(http.MethodDelete,
+		strings.TrimRight(relayURL, "/")+"/v1/daemon", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	return resp.StatusCode/100 == 2
 }
 
 // ensureCredential 生成或复用 daemon 凭据，返回完整凭据与 secret 部分。

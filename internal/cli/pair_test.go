@@ -122,3 +122,104 @@ func TestUnpairClearsIdentity(t *testing.T) {
 		t.Fatalf("unpair 后 daemon_id=%q credential=%q", saved.DaemonID, saved.DaemonCredential)
 	}
 }
+
+func TestResolveRelay(t *testing.T) {
+	cases := []struct {
+		name  string
+		flag  string
+		saved string
+		want  string
+	}{
+		{"flag 优先", "https://a.example.com", "https://b.example.com", "https://a.example.com"},
+		{"其次落盘配置", "", "https://b.example.com/", "https://b.example.com"},
+		{"最后官方中继", "", "", config.DefaultRelayURL},
+		{"空白值视为未填", "  ", "  ", config.DefaultRelayURL},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveRelay(c.flag, c.saved); got != c.want {
+				t.Fatalf("resolveRelay(%q,%q) = %q, want %q", c.flag, c.saved, got, c.want)
+			}
+		})
+	}
+}
+
+func TestPairQRPayload(t *testing.T) {
+	got := pairQRPayload("https://relay.devpilot.app", "ABC234567")
+	want := "devpilot://pair?v=1&code=ABC234567&relay=https%3A%2F%2Frelay.devpilot.app"
+	if got != want {
+		t.Fatalf("payload = %q, want %q", got, want)
+	}
+	// relay 地址必须被转义,扫码端才能按 URL 解析。
+	if !strings.Contains(got, "relay=https%3A%2F%2F") {
+		t.Fatal("relay 未转义")
+	}
+}
+
+func TestRenderPairQR(t *testing.T) {
+	var out bytes.Buffer
+	renderPairQR(&out, pairQRPayload("https://relay.devpilot.app", "ABC234567"))
+	// 半块字符画:非空、多行、含 QR 半块字符。
+	s := out.String()
+	if len(s) < 100 || !strings.ContainsAny(s, "▀▄█") {
+		t.Fatalf("二维码渲染异常: %q", s[:min(80, len(s))])
+	}
+}
+
+// TestUnpairRevokesOnRelay unpair 应尽力调 DELETE /v1/daemon;
+// relay 不可达(离线/未升级)不阻塞本地解绑。
+func TestUnpairRevokesOnRelay(t *testing.T) {
+	var (
+		gotMethod string
+		gotPath   string
+		gotAuth   string
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		// 未升级的 relay 返回 404:仍应视为"吊销尽力了"。
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	cred := "dpd_dd_test_" + strings.Repeat("s", 32)
+	paths := config.NewPaths(t.TempDir())
+	cfg := config.Default()
+	cfg.DaemonID = "dd_test"
+	cfg.DaemonCredential = cred
+	cfg.RelayURL = ts.URL
+	if err := cfg.Save(paths); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := runUnpair([]string{"--dir", paths.Dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/v1/daemon" {
+		t.Fatalf("吊销请求 = %s %s", gotMethod, gotPath)
+	}
+	if gotAuth != "Bearer "+cred {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	if !strings.Contains(stdout.String(), "已吊销") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+
+	// relay 离线:解绑仍应成功退出 0。
+	paths2 := config.NewPaths(t.TempDir())
+	cfg2 := config.Default()
+	cfg2.DaemonID = "dd_test"
+	cfg2.DaemonCredential = cred
+	cfg2.RelayURL = "http://127.0.0.1:1" // 必然连接失败
+	if err := cfg2.Save(paths2); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if code := runUnpair([]string{"--dir", paths2.Dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("relay 离线时 exit=%d", code)
+	}
+	saved, err := config.Load(paths2)
+	if err != nil || saved.DaemonID != "" || saved.DaemonCredential != "" {
+		t.Fatalf("离线解绑后配置 = %+v err=%v", saved, err)
+	}
+}

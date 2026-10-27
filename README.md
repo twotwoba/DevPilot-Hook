@@ -48,10 +48,17 @@ Linux 还可以直接下载 Releases 里的 `.deb` / `.rpm` / `.tar.gz`。
 ```bash
 devpilot-hook install            # 写入 Claude Code / Codex hooks（只增改自家条目）
 devpilot-hook service install    # launchd / systemd user 自启
-devpilot-hook pair --relay https://relay.example.com
+devpilot-hook pair               # 缺省用官方托管中继 relay.devpilot.app；终端打印二维码 + 配对码
+devpilot-hook pair --relay https://relay.example.com   # 自部署中继时显式指定（双轨）
 devpilot-hook doctor             # 配置、hooks、网关、relay、队列自检
 devpilot-hook serve              # 前台运行；service 管理器也会执行它
 ```
+
+`pair` 的地址回退链:`--relay` > config.json 的 `relay_url` > 官方托管中继
+(`config.DefaultRelayURL`)。iPhone 端 DevPilot App 扫终端二维码即可完成配对
+(payload 为 `devpilot://pair?v=1&relay=…&code=…`),也可手动输入配对码;
+`--no-qr` 关闭二维码。`unpair` 会尽力调用 relay 的吊销端点级联删除云端数据,
+失败(离线/旧版 relay)不影响本地解绑。
 
 `uninstall` 只删除自家 hooks 条目与自启配置，`--purge` 才会清空状态目录。
 

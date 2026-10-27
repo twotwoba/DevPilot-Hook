@@ -19,6 +19,10 @@ const (
 	DefaultApprovalTimeoutSeconds = wire.ApprovalWaitSeconds
 	DefaultToolEventInterval      = 300
 	DefaultApprovalMode           = string(ApprovalModePermissionRequest)
+
+	// DefaultRelayURL 是官方托管中继;pair 未显式指定时使用,
+	// 用户零配置。自部署仍可用 --relay 覆盖(双轨)。
+	DefaultRelayURL = "https://relay.devpilot.app"
 )
 
 // ApprovalMode 决定审批走哪个 hook 事件。

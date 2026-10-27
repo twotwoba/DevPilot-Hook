@@ -50,7 +50,8 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 			checks = append(checks, checkResult{"daemon_id", "ok", cfg.DaemonID})
 		}
 		if cfg.DaemonCredential == "" {
-			checks = append(checks, checkResult{"pairing", "warn", "尚未配对，运行 pair --relay <url>"})
+			checks = append(checks, checkResult{"pairing", "warn",
+				"尚未配对，运行 devpilot-hook pair（默认官方中继 " + config.DefaultRelayURL + "）"})
 		} else {
 			checks = append(checks, checkResult{"pairing", "ok", "已配对 " + cfg.RelayURL})
 		}
@@ -116,7 +117,7 @@ func checkGateway(cfg *config.Config, paths config.Paths) checkResult {
 // checkRelayHealth 顺带用 HTTP Date 估算时钟偏差（JWT iat 对时钟敏感）。
 func checkRelayHealth(cfg *config.Config) checkResult {
 	if cfg.RelayURL == "" {
-		return checkResult{"relay", "warn", "未配置 relay"}
+		return checkResult{"relay", "warn", "未配置 relay（pair 后写入，默认 " + config.DefaultRelayURL + "）"}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(strings.TrimRight(cfg.RelayURL, "/") + "/healthz")
@@ -132,7 +133,7 @@ func checkRelayHealth(cfg *config.Config) checkResult {
 
 func checkClock(cfg *config.Config) checkResult {
 	if cfg.RelayURL == "" {
-		return checkResult{"clock", "warn", "未配置 relay，无法校验时钟"}
+		return checkResult{"clock", "warn", "未配置 relay，无法校验时钟（pair 后可用）"}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Head(strings.TrimRight(cfg.RelayURL, "/") + "/healthz")

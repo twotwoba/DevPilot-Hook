@@ -57,7 +57,7 @@ func printUsage(w io.Writer) {
 用法:
   devpilot-hook install    [--agent claude,codex] [--approval-mode permission-request|pre-tool-use] [--dir PATH]
   devpilot-hook uninstall  [--agent claude,codex] [--purge] [--dir PATH]
-  devpilot-hook pair       --relay https://relay.example.com [--dir PATH]
+  devpilot-hook pair       [--relay https://relay.example.com] [--no-qr] [--dir PATH]
   devpilot-hook unpair     [--dir PATH]
   devpilot-hook serve      [--dir PATH] [--foreground]
   devpilot-hook doctor     [--json] [--dir PATH]
