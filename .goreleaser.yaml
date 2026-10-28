@@ -38,7 +38,8 @@ archives:
 checksum:
   name_template: checksums.txt
 
-# macOS：Cask 适合分发预编译 CLI。未签名版本需要去掉 quarantine 才能运行。
+# macOS：Cask 适合分发预编译 CLI。未签名版本需要去掉 quarantine 才能运行
+# （Homebrew 下载解包时会主动打 quarantine 标记，不去掉 Gatekeeper 直接拦截执行）。
 homebrew_casks:
   - name: devpilot-hook
     repository:
@@ -52,10 +53,15 @@ homebrew_casks:
       - devpilot-hook
     hooks:
       post:
-        install: |
+        # install_steps（GoReleaser v2.19+ 新字段）生成 postflight_steps stanza；
+        # 旧的 install 字段生成已弃用的 postflight，brew 每次都会刷警告。
+        # StagedPath 模板变量会原样输出 Homebrew 的同名 token，由其执行期展开
+        # 成实际 staging 路径（不能直接写花括号字面量，会被当成 Go 模板解析）。
+        # 注意：新 DSL 是结构化步骤，#{staged_path} 这类 Ruby 插值不可用。
+        install_steps: |
           # cask 也会在 Linux 的 Homebrew 上生成安装块，而 Linux 没有 xattr。
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/devpilot-hook"]
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/devpilot-hook"]
           end
 
 # Linux：deb / rpm 便于服务器与桌面无人值守安装。
