@@ -63,7 +63,7 @@ func Open(path string, opts Options) (*WAL, error) {
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("queue: 打开 WAL 失败: %w", err)
+		return nil, fmt.Errorf("queue: failed to open WAL: %w", err)
 	}
 	w.file = f
 	info, err := f.Stat()
@@ -82,7 +82,7 @@ func (w *WAL) replay() error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("queue: 读取 WAL 失败: %w", err)
+		return fmt.Errorf("queue: failed to read WAL: %w", err)
 	}
 	defer f.Close()
 
@@ -103,12 +103,12 @@ func (w *WAL) replay() error {
 			if !scanner.Scan() {
 				// 末行损坏（崩溃时写了一半），截断到上一个完整行。
 				if err := os.Truncate(w.path, goodOffset); err != nil {
-					return fmt.Errorf("queue: 截断损坏末行失败: %w", err)
+					return fmt.Errorf("queue: failed to truncate corrupted tail: %w", err)
 				}
 				return nil
 			}
 			// 不是末行：数据真的损坏了，拒绝启动以免静默丢事件。
-			return fmt.Errorf("queue: WAL 第 %d 行损坏: %w", lineNo, err)
+			return fmt.Errorf("queue: corrupted WAL line %d: %w", lineNo, err)
 		}
 		goodOffset = offset
 
@@ -126,7 +126,7 @@ func (w *WAL) replay() error {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("queue: 扫描 WAL 失败: %w", err)
+		return fmt.Errorf("queue: failed to scan WAL: %w", err)
 	}
 
 	// 崩溃可能留下一个完整但无换行结尾的 JSON；补上换行，
@@ -163,7 +163,7 @@ func (w *WAL) replay() error {
 // Put 追加一条事件；重复 event_id 幂等。
 func (w *WAL) Put(env wire.Envelope) error {
 	if env.EventID == "" {
-		return fmt.Errorf("queue: 事件缺少 event_id")
+		return fmt.Errorf("queue: event missing event_id")
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -240,10 +240,10 @@ func (w *WAL) appendLocked(rec record) error {
 	data = append(data, '\n')
 	n, err := w.file.Write(data)
 	if err != nil {
-		return fmt.Errorf("queue: 写入 WAL 失败: %w", err)
+		return fmt.Errorf("queue: failed to write WAL: %w", err)
 	}
 	if err := w.file.Sync(); err != nil {
-		return fmt.Errorf("queue: fsync WAL 失败: %w", err)
+		return fmt.Errorf("queue: failed to fsync WAL: %w", err)
 	}
 	w.size += int64(n)
 	return nil

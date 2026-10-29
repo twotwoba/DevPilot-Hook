@@ -17,7 +17,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "用法: devpilot-hook service install|uninstall|status")
+		fmt.Fprintln(stderr, "usage: devpilot-hook service install|uninstall|status")
 		return 2
 	}
 
@@ -32,13 +32,13 @@ func runService(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintln(stdout, "已注册开机自启服务:", service.Path())
+		fmt.Fprintln(stdout, "registered auto-start service:", service.Path())
 	case "uninstall":
 		if err := service.Uninstall(); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintln(stdout, "已移除开机自启服务")
+		fmt.Fprintln(stdout, "removed auto-start service")
 	case "status":
 		status, err := service.Status()
 		if err != nil {
@@ -47,7 +47,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, status)
 	default:
-		fmt.Fprintf(stderr, "未知 service 子命令: %s\n", fs.Arg(0))
+		fmt.Fprintf(stderr, "unknown service subcommand: %s\n", fs.Arg(0))
 		return 2
 	}
 	return 0

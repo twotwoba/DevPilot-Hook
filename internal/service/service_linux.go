@@ -25,13 +25,13 @@ func Install(exe, dir string) error {
 		return err
 	}
 	if err := os.WriteFile(path, renderUnit(exe, dir), 0o600); err != nil {
-		return fmt.Errorf("写入 systemd unit 失败: %w", err)
+		return fmt.Errorf("failed to write systemd unit: %w", err)
 	}
 	if out, err := exec.Command("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl daemon-reload 失败: %v: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("systemctl daemon-reload failed: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.Command("systemctl", "--user", "enable", "--now", unitName).CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl enable 失败: %v: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("systemctl enable failed: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -51,7 +51,7 @@ func Uninstall() error {
 func Status() (string, error) {
 	out, err := exec.Command("systemctl", "--user", "status", unitName, "--no-pager").CombinedOutput()
 	if err != nil {
-		return "未运行（可运行 service install）", nil
+		return "not running (run service install)", nil
 	}
 	return string(out), nil
 }

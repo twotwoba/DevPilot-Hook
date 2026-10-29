@@ -90,18 +90,18 @@ func mergeHooksFile(path, agentName, exe string, mode config.ApprovalMode, insta
 	original, err := os.ReadFile(path)
 	exists := err == nil
 	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("读取 %s 失败: %w", path, err)
+		return false, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 	if exists && len(bytes.TrimSpace(original)) > 0 {
 		if err := json.Unmarshal(original, &root); err != nil {
-			return false, fmt.Errorf("%s 不是合法 JSON，拒绝修改: %w", path, err)
+			return false, fmt.Errorf("%s is not valid JSON; refusing to modify: %w", path, err)
 		}
 	}
 
 	hooks := map[string][]json.RawMessage{}
 	if raw, ok := root["hooks"]; ok {
 		if err := json.Unmarshal(raw, &hooks); err != nil {
-			return false, fmt.Errorf("%s 的 hooks 字段格式异常，拒绝修改: %w", path, err)
+			return false, fmt.Errorf("malformed hooks field in %s; refusing to modify: %w", path, err)
 		}
 	}
 
@@ -164,7 +164,7 @@ func mergeHooksFile(path, agentName, exe string, mode config.ApprovalMode, insta
 	if exists {
 		bak := path + ".devpilot.bak"
 		if err := os.WriteFile(bak, original, 0o600); err != nil {
-			return false, fmt.Errorf("备份 %s 失败: %w", path, err)
+			return false, fmt.Errorf("failed to back up %s: %w", path, err)
 		}
 	}
 	if err := config.WriteAtomic(path, data, 0o600); err != nil {
@@ -212,7 +212,7 @@ func findStableExecutable() (string, error) {
 		exe = resolved
 	}
 	if isVersionedPath(exe) {
-		return "", fmt.Errorf("当前可执行文件位于版本目录 %s，请通过 Homebrew 的稳定路径（如 /opt/homebrew/bin/devpilot-hook）运行 install", exe)
+		return "", fmt.Errorf("executable is in a versioned directory %s; run install from a stable Homebrew path (e.g. /opt/homebrew/bin/devpilot-hook)", exe)
 	}
 	return exe, nil
 }
@@ -231,6 +231,6 @@ func agentConfigPath(agentName string) (string, error) {
 	case "codex":
 		return homeFile(".codex", "hooks.json")
 	default:
-		return "", fmt.Errorf("未知 agent: %s", agentName)
+		return "", fmt.Errorf("unknown agent: %s", agentName)
 	}
 }

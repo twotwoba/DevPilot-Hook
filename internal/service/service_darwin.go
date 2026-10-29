@@ -32,14 +32,14 @@ func Install(exe, dir string) error {
 		return err
 	}
 	if err := os.WriteFile(path, plist, 0o600); err != nil {
-		return fmt.Errorf("写入 LaunchAgent 失败: %w", err)
+		return fmt.Errorf("failed to write LaunchAgent plist: %w", err)
 	}
 
 	// 重复安装时先卸载旧实例；bootout 失败说明尚未加载，可以忽略。
 	domain := "gui/" + strconv.Itoa(currentUID())
 	_ = exec.Command("launchctl", "bootout", domain+"/"+label).Run()
 	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap 失败: %v: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("launchctl bootstrap failed: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -60,7 +60,7 @@ func Status() (string, error) {
 	domain := "gui/" + strconv.Itoa(currentUID())
 	out, err := exec.Command("launchctl", "print", domain+"/"+label).CombinedOutput()
 	if err != nil {
-		return "未加载（可运行 service install）", nil
+		return "not loaded (run service install)", nil
 	}
 	lines := strings.Split(string(out), "\n")
 	if len(lines) > 12 {

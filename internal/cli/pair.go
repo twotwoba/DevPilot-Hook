@@ -36,8 +36,8 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 	var dir, relay string
 	var noQR bool
 	pathsFlag(fs, &dir)
-	fs.StringVar(&relay, "relay", "", "relay 地址（缺省使用官方托管中继）")
-	fs.BoolVar(&noQR, "no-qr", false, "不在终端渲染配对二维码")
+	fs.StringVar(&relay, "relay", "", "relay URL (defaults to the official hosted relay)")
+	fs.BoolVar(&noQR, "no-qr", false, "do not render the pairing QR code in the terminal")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -73,7 +73,7 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest(http.MethodPost, relay+"/v1/pairing/sessions", bytes.NewReader(payload))
 	if err != nil {
-		fmt.Fprintf(stderr, "构造配对请求失败: %v\n", err)
+		fmt.Fprintf(stderr, "failed to build pairing request: %v\n", err)
 		return 1
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -81,13 +81,13 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 	req.Header.Set("Authorization", "Bearer "+credential)
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(stderr, "注册配对会话失败: %v\n", err)
+		fmt.Fprintf(stderr, "failed to register pairing session: %v\n", err)
 		return 1
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode/100 != 2 {
-		fmt.Fprintf(stderr, "relay 拒绝配对会话（HTTP %d）: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		fmt.Fprintf(stderr, "relay rejected the pairing session (HTTP %d): %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
 		return 1
 	}
 
@@ -98,7 +98,7 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintln(stdout, "配对会话已创建（15 分钟内有效），在 DevPilot App 中扫码或输入配对码：")
+	fmt.Fprintln(stdout, "Pairing session created (valid for 15 minutes). Scan the QR code or enter the pairing code in the DevPilot app:")
 	fmt.Fprintln(stdout)
 	if !noQR {
 		renderPairQR(stdout, pairQRPayload(relay, code))
@@ -168,7 +168,7 @@ func runUnpair(args []string, stdout, stderr io.Writer) int {
 	// 吊销不阻塞本地解绑,凭据本身即刻失效。
 	if cfg.DaemonID != "" && cfg.DaemonCredential != "" && cfg.RelayURL != "" {
 		if ok := revokeDaemon(cfg.RelayURL, cfg.DaemonCredential); ok {
-			fmt.Fprintln(stdout, "relay 侧数据已吊销")
+			fmt.Fprintln(stdout, "relay-side data revoked")
 		}
 	}
 	// 同时清空 daemon_id：relay 侧凭据轮换必须出示旧凭据，
@@ -179,7 +179,7 @@ func runUnpair(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintln(stdout, "已解除本机与 relay 的配对；下次 pair 会生成新的 daemon_id")
+	fmt.Fprintln(stdout, "unpaired from the relay; the next pair will generate a new daemon_id")
 	return 0
 }
 
@@ -220,7 +220,7 @@ func hashSecret(secret string) string {
 func pairingCode() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("生成配对码失败: %w", err)
+		return "", fmt.Errorf("failed to generate pairing code: %w", err)
 	}
 	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 	return enc, nil

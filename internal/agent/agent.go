@@ -37,7 +37,7 @@ type Input struct {
 func ParseInput(data []byte) (Input, error) {
 	var in Input
 	if err := json.Unmarshal(data, &in); err != nil {
-		return in, fmt.Errorf("agent: 解析 hook 输入失败: %w", err)
+		return in, fmt.Errorf("agent: failed to parse hook input: %w", err)
 	}
 	if in.SessionID == "" {
 		in.SessionID = in.SessionIDCamel
@@ -46,7 +46,7 @@ func ParseInput(data []byte) (Input, error) {
 		// 没有会话 ID 时用 transcript 路径派生稳定 ID，避免审批无法路由；
 		// 两者都没有则拒绝，因为无法保证同一会话内幂等。
 		if in.TranscriptPath == "" {
-			return in, fmt.Errorf("agent: hook 输入缺少 session_id 与 transcript_path")
+			return in, fmt.Errorf("agent: hook input missing session_id and transcript_path")
 		}
 		sum := sha256.Sum256([]byte(in.TranscriptPath))
 		in.SessionID = "sess_" + hex.EncodeToString(sum[:])[:16]
@@ -72,7 +72,7 @@ type Adapter interface {
 
 // BasePayload 生成所有事件共有的摘要字段。
 func BasePayload(in Input) wire.Payload {
-	title := "Agent 会话"
+	title := "Agent session"
 	if in.Cwd != "" {
 		if base := filepath.Base(in.Cwd); base != "." && base != string(filepath.Separator) {
 			title = base

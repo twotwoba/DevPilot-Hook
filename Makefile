@@ -6,12 +6,12 @@ LDFLAGS := -s -w -X github.com/twotwoba/DevPilot-Hook/internal/cli.Version=$(VER
 .PHONY: help build test race e2e lint work install-local clean
 
 help:
-	@echo "make build        编译到 ./bin/$(BIN)"
-	@echo "make test         运行单元测试"
-	@echo "make race         运行单元测试（-race）"
-	@echo "make e2e          运行端到端测试（需同级 DevPilot-APNS）"
-	@echo "make work         复制 go.work.example 生成 go.work"
-	@echo "make install-local 安装到 ~/.local/bin"
+	@echo "make build        build to ./bin/$(BIN)"
+	@echo "make test         run unit tests"
+	@echo "make race         run unit tests (-race)"
+	@echo "make e2e          run end-to-end tests (requires sibling DevPilot-APNS)"
+	@echo "make work         copy go.work.example to go.work"
+	@echo "make install-local install to ~/.local/bin"
 
 build:
 	@mkdir -p bin
@@ -31,7 +31,7 @@ lint:
 
 work:
 	@test -f go.work || cp go.work.example go.work
-	@echo "go.work 已就绪"
+	@echo "go.work is ready"
 
 install-local: build
 	install -m 0755 bin/$(BIN) $(HOME)/.local/bin/$(BIN)

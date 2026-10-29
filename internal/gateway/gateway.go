@@ -62,16 +62,16 @@ type Server struct {
 // New 校验依赖并创建网关。
 func New(p Params) (*Server, error) {
 	if p.Token == "" {
-		return nil, errors.New("gateway: 缺少本地 token")
+		return nil, errors.New("gateway: missing local token")
 	}
 	if p.DaemonID == "" {
-		return nil, errors.New("gateway: 缺少 daemon_id")
+		return nil, errors.New("gateway: missing daemon_id")
 	}
 	if p.Registry == nil || p.WAL == nil {
-		return nil, errors.New("gateway: 缺少 Registry 或 WAL")
+		return nil, errors.New("gateway: missing Registry or WAL")
 	}
 	if len(p.Adapters) == 0 {
-		return nil, errors.New("gateway: 未注册任何 agent 适配器")
+		return nil, errors.New("gateway: no agent adapters registered")
 	}
 	if p.ApprovalTimeout <= 0 {
 		p.ApprovalTimeout = wire.ApprovalWaitSeconds * time.Second
@@ -115,12 +115,12 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	ln, err := net.Listen("tcp", s.p.Addr)
 	if err != nil {
-		return fmt.Errorf("gateway: 监听失败: %w", err)
+		return fmt.Errorf("gateway: listen failed: %w", err)
 	}
 	s.mu.Lock()
 	s.addr = ln.Addr().String()
 	s.mu.Unlock()
-	s.log.Info("本地网关已启动", "addr", s.addr)
+	s.log.Info("local gateway started", "addr", s.addr)
 
 	srv := &http.Server{
 		Handler:           s.Handler(),
@@ -142,11 +142,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) localOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
-			writeError(w, http.StatusForbidden, "不允许浏览器来源的请求")
+			writeError(w, http.StatusForbidden, "browser-origin requests are not allowed")
 			return
 		}
 		if !validHost(r.Host) {
-			writeError(w, http.StatusForbidden, "Host 必须是本机回环地址")
+			writeError(w, http.StatusForbidden, "host must be a loopback address")
 			return
 		}
 		next(w, r)
@@ -159,7 +159,7 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if len(got) != len(s.p.Token) ||
 			subtle.ConstantTimeCompare([]byte(got), []byte(s.p.Token)) != 1 {
-			writeError(w, http.StatusUnauthorized, "本地 token 无效")
+			writeError(w, http.StatusUnauthorized, "invalid local token")
 			return
 		}
 		next(w, r)
@@ -202,13 +202,13 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	name := wire.Agent(r.PathValue("agent"))
 	adapter, ok := s.p.Adapters[name]
 	if !ok {
-		writeError(w, http.StatusNotFound, "不支持的 agent: "+string(name))
+		writeError(w, http.StatusNotFound, "unsupported agent: "+string(name))
 		return
 	}
 
 	body, err := readLimited(w, r)
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "请求体过大")
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
 	in, err := agent.ParseInput(body)
@@ -278,7 +278,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	body, err := readLimited(w, r)
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "请求体过大")
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
 	msg, err := wire.Decode(body)
@@ -288,11 +288,11 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	env, ok := msg.(*wire.Envelope)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "只接受 kind=event")
+		writeError(w, http.StatusBadRequest, "only kind=event is accepted")
 		return
 	}
 	if env.DaemonID != s.p.DaemonID {
-		writeError(w, http.StatusBadRequest, "daemon_id 不匹配")
+		writeError(w, http.StatusBadRequest, "daemon_id mismatch")
 		return
 	}
 	if err := s.enqueue(r.Context(), *env); err != nil {
@@ -305,12 +305,12 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
 	body, err := readLimited(w, r)
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "请求体过大")
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
 	var d wire.Decision
 	if err := json.Unmarshal(body, &d); err != nil {
-		writeError(w, http.StatusBadRequest, "决策 JSON 无效")
+		writeError(w, http.StatusBadRequest, "invalid decision JSON")
 		return
 	}
 	if err := d.Validate(); err != nil {
@@ -334,7 +334,7 @@ func (s *Server) enqueue(ctx context.Context, env wire.Envelope) error {
 	}
 	if s.p.Publisher != nil {
 		if err := s.p.Publisher.Publish(ctx, env); err != nil {
-			s.log.Debug("事件暂存 WAL，等待重连补发", "event_id", env.EventID, "err", err)
+			s.log.Debug("event buffered in WAL, will resend after reconnect", "event_id", env.EventID, "err", err)
 		}
 	}
 	return nil

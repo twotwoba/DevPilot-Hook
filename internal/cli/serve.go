@@ -30,7 +30,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	var dir string
 	var foreground bool
 	pathsFlag(fs, &dir)
-	fs.BoolVar(&foreground, "foreground", false, "前台运行（service 管理器使用；当前实现始终前台）")
+	fs.BoolVar(&foreground, "foreground", false, "run in the foreground (used by the service manager; currently always foreground)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -124,7 +124,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 	select {
 	case <-ctx.Done():
-		fmt.Fprintln(stdout, "正在退出…")
+		fmt.Fprintln(stdout, "shutting down...")
 		return 0
 	case err := <-errCh:
 		if err == nil {
@@ -132,7 +132,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		}
 		// 端口被占用时退回随机端口，并把实际端口写回配置。
 		if isAddrInUse(err) {
-			fmt.Fprintf(stderr, "端口 %d 被占用，改用随机端口\n", cfg.GatewayPort)
+			fmt.Fprintf(stderr, "port %d in use, falling back to a random port\n", cfg.GatewayPort)
 			return serveOnRandomPort(ctx, cfg, paths, token, wal, reg, adapters, publisher, timeout, stdout, stderr)
 		}
 		fmt.Fprintln(stderr, err)
@@ -169,7 +169,7 @@ func serveOnRandomPort(
 	deadline := time.Now().Add(2 * time.Second)
 	for gw.Addr() == "127.0.0.1:0" || gw.Addr() == "" {
 		if time.Now().After(deadline) {
-			fmt.Fprintln(stderr, "等待随机端口监听超时")
+			fmt.Fprintln(stderr, "timed out waiting for a random port to listen")
 			return 1
 		}
 		select {
@@ -186,9 +186,9 @@ func serveOnRandomPort(
 		if port, err := strconv.Atoi(portStr); err == nil {
 			cfg.GatewayPort = port
 			if err := cfg.Save(paths); err != nil {
-				fmt.Fprintf(stderr, "写回网关端口失败: %v\n", err)
+				fmt.Fprintf(stderr, "failed to write back gateway port: %v\n", err)
 			} else {
-				fmt.Fprintf(stdout, "网关已切换到 127.0.0.1:%d\n", port)
+				fmt.Fprintf(stdout, "gateway moved to 127.0.0.1:%d\n", port)
 			}
 		}
 	}

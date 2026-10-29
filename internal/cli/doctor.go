@@ -25,7 +25,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	var dir string
 	var asJSON bool
 	pathsFlag(fs, &dir)
-	fs.BoolVar(&asJSON, "json", false, "以 JSON 输出")
+	fs.BoolVar(&asJSON, "json", false, "output as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -45,15 +45,15 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 
 	if cfg != nil {
 		if cfg.DaemonID == "" {
-			checks = append(checks, checkResult{"daemon_id", "fail", "尚未生成，请运行 install"})
+			checks = append(checks, checkResult{"daemon_id", "fail", "not generated yet, run install first"})
 		} else {
 			checks = append(checks, checkResult{"daemon_id", "ok", cfg.DaemonID})
 		}
 		if cfg.DaemonCredential == "" {
 			checks = append(checks, checkResult{"pairing", "warn",
-				"尚未配对，运行 devpilot-hook pair（默认官方中继 " + config.DefaultRelayURL + "）"})
+				"not paired yet, run devpilot-hook pair (default hosted relay " + config.DefaultRelayURL + ")"})
 		} else {
-			checks = append(checks, checkResult{"pairing", "ok", "已配对 " + cfg.RelayURL})
+			checks = append(checks, checkResult{"pairing", "ok", "paired with " + cfg.RelayURL})
 		}
 		checks = append(checks, checkClock(cfg))
 		checks = append(checks, checkGateway(cfg, paths))
@@ -90,7 +90,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 func checkGateway(cfg *config.Config, paths config.Paths) checkResult {
 	token, err := os.ReadFile(paths.TokenPath())
 	if err != nil {
-		return checkResult{"gateway", "warn", "本地 token 不存在（daemon 可能尚未启动）"}
+		return checkResult{"gateway", "warn", "local token not found (daemon may not be running yet)"}
 	}
 	req, err := http.NewRequest(http.MethodGet, statusURL(cfg)+"/v1/status", nil)
 	if err != nil {
@@ -100,7 +100,7 @@ func checkGateway(cfg *config.Config, paths config.Paths) checkResult {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return checkResult{"gateway", "warn", "未运行或无法连接: " + err.Error()}
+		return checkResult{"gateway", "warn", "not running or unreachable: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -108,7 +108,7 @@ func checkGateway(cfg *config.Config, paths config.Paths) checkResult {
 	}
 	var status map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return checkResult{"gateway", "warn", "状态响应无法解析"}
+		return checkResult{"gateway", "warn", "could not parse status response"}
 	}
 	return checkResult{"gateway", "ok", fmt.Sprintf("queue_depth=%v pending=%v",
 		status["queue_depth"], status["pending_approvals"])}
@@ -117,12 +117,12 @@ func checkGateway(cfg *config.Config, paths config.Paths) checkResult {
 // checkRelayHealth 顺带用 HTTP Date 估算时钟偏差（JWT iat 对时钟敏感）。
 func checkRelayHealth(cfg *config.Config) checkResult {
 	if cfg.RelayURL == "" {
-		return checkResult{"relay", "warn", "未配置 relay（pair 后写入，默认 " + config.DefaultRelayURL + "）"}
+		return checkResult{"relay", "warn", "relay not configured (written after pair, default " + config.DefaultRelayURL + ")"}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(strings.TrimRight(cfg.RelayURL, "/") + "/healthz")
 	if err != nil {
-		return checkResult{"relay", "warn", "无法连接: " + err.Error()}
+		return checkResult{"relay", "warn", "unreachable: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -133,17 +133,17 @@ func checkRelayHealth(cfg *config.Config) checkResult {
 
 func checkClock(cfg *config.Config) checkResult {
 	if cfg.RelayURL == "" {
-		return checkResult{"clock", "warn", "未配置 relay，无法校验时钟（pair 后可用）"}
+		return checkResult{"clock", "warn", "relay not configured, clock skew unavailable (available after pair)"}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Head(strings.TrimRight(cfg.RelayURL, "/") + "/healthz")
 	if err != nil {
-		return checkResult{"clock", "warn", "无法读取 relay 时间"}
+		return checkResult{"clock", "warn", "could not read relay time"}
 	}
 	defer resp.Body.Close()
 	serverTime, err := http.ParseTime(resp.Header.Get("Date"))
 	if err != nil {
-		return checkResult{"clock", "warn", "relay 未返回 Date 头"}
+		return checkResult{"clock", "warn", "relay did not return a Date header"}
 	}
 	skew := time.Since(serverTime)
 	if skew < 0 {
@@ -153,7 +153,7 @@ func checkClock(cfg *config.Config) checkResult {
 	if skew > 30*time.Second {
 		status = "warn"
 	}
-	return checkResult{"clock", status, "偏差 " + skew.Round(time.Second).String()}
+	return checkResult{"clock", status, "skew " + skew.Round(time.Second).String()}
 }
 
 func checkHooks(agentName string) checkResult {
@@ -163,10 +163,10 @@ func checkHooks(agentName string) checkResult {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return checkResult{"hooks." + agentName, "warn", "未安装（" + path + "）"}
+		return checkResult{"hooks." + agentName, "warn", "not installed (" + path + ")"}
 	}
 	if !strings.Contains(string(data), hookMarker+" "+agentName) {
-		return checkResult{"hooks." + agentName, "warn", "配置中未找到 devpilot-hook 条目"}
+		return checkResult{"hooks." + agentName, "warn", "devpilot-hook entry not found in agent config"}
 	}
 	return checkResult{"hooks." + agentName, "ok", path}
 }
@@ -174,7 +174,7 @@ func checkHooks(agentName string) checkResult {
 func checkQueue(paths config.Paths) checkResult {
 	info, err := os.Stat(paths.WALPath())
 	if err != nil {
-		return checkResult{"queue", "ok", "空（尚未产生事件）"}
+		return checkResult{"queue", "ok", "empty (no events yet)"}
 	}
-	return checkResult{"queue", "ok", fmt.Sprintf("%d 字节", info.Size())}
+	return checkResult{"queue", "ok", fmt.Sprintf("%d bytes", info.Size())}
 }

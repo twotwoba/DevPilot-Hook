@@ -14,8 +14,8 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var dir, agentsFlag, modeFlag string
 	pathsFlag(fs, &dir)
-	fs.StringVar(&agentsFlag, "agent", "claude,codex", "要安装的 Agent（逗号分隔）")
-	fs.StringVar(&modeFlag, "approval-mode", string(config.ApprovalModePermissionRequest), "审批模式：permission-request 或 pre-tool-use")
+	fs.StringVar(&agentsFlag, "agent", "claude,codex", "agents to install (comma-separated)")
+	fs.StringVar(&modeFlag, "approval-mode", string(config.ApprovalModePermissionRequest), "approval mode: permission-request or pre-tool-use")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -26,7 +26,7 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	mode := config.ApprovalMode(modeFlag)
 	if !mode.Valid() {
-		fmt.Fprintf(stderr, "未知审批模式: %s\n", modeFlag)
+		fmt.Fprintf(stderr, "unknown approval mode: %s\n", modeFlag)
 		return 2
 	}
 
@@ -66,20 +66,20 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 		}
 		changed, err := installHooksFile(path, name, exe, mode)
 		if err != nil {
-			fmt.Fprintf(stderr, "安装 %s hooks 失败: %v\n", name, err)
+			fmt.Fprintf(stderr, "failed to install %s hooks: %v\n", name, err)
 			return 1
 		}
 		switch {
 		case changed:
-			fmt.Fprintf(stdout, "已安装 %s hooks → %s（原文件备份为 .devpilot.bak）\n", name, path)
+			fmt.Fprintf(stdout, "installed %s hooks -> %s (original backed up as .devpilot.bak)\n", name, path)
 		default:
-			fmt.Fprintf(stdout, "%s hooks 已是最新 → %s\n", name, path)
+			fmt.Fprintf(stdout, "%s hooks already up to date -> %s\n", name, path)
 		}
 	}
 
-	fmt.Fprintf(stdout, "状态目录: %s\n", paths.Dir)
-	fmt.Fprintln(stdout, "下一步: devpilot-hook pair --relay https://<你的 relay 域名>")
-	fmt.Fprintln(stdout, "随后: devpilot-hook service install")
+	fmt.Fprintf(stdout, "state directory: %s\n", paths.Dir)
+	fmt.Fprintln(stdout, "next: devpilot-hook pair --relay https://<your relay host>")
+	fmt.Fprintln(stdout, "then: devpilot-hook service install")
 	return 0
 }
 
@@ -89,8 +89,8 @@ func runUninstall(args []string, stdout, stderr io.Writer) int {
 	var dir, agentsFlag string
 	var purge bool
 	pathsFlag(fs, &dir)
-	fs.StringVar(&agentsFlag, "agent", "claude,codex", "要卸载的 Agent（逗号分隔）")
-	fs.BoolVar(&purge, "purge", false, "同时删除状态目录（凭据、队列、token）")
+	fs.StringVar(&agentsFlag, "agent", "claude,codex", "agents to uninstall (comma-separated)")
+	fs.BoolVar(&purge, "purge", false, "also remove the state directory (credentials, queue, token)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -108,13 +108,13 @@ func runUninstall(args []string, stdout, stderr io.Writer) int {
 		}
 		changed, err := uninstallHooksFile(path, name)
 		if err != nil {
-			fmt.Fprintf(stderr, "卸载 %s hooks 失败: %v\n", name, err)
+			fmt.Fprintf(stderr, "failed to uninstall %s hooks: %v\n", name, err)
 			return 1
 		}
 		if changed {
-			fmt.Fprintf(stdout, "已移除 %s hooks ← %s\n", name, path)
+			fmt.Fprintf(stdout, "removed %s hooks from %s\n", name, path)
 		} else {
-			fmt.Fprintf(stdout, "%s 未发现 devpilot-hook 条目\n", name)
+			fmt.Fprintf(stdout, "no devpilot-hook entry found for %s\n", name)
 		}
 	}
 
@@ -128,7 +128,7 @@ func runUninstall(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "已删除状态目录: %s\n", paths.Dir)
+		fmt.Fprintf(stdout, "purged state directory: %s\n", paths.Dir)
 	}
 	return 0
 }

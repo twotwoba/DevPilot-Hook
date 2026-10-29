@@ -73,10 +73,10 @@ type Client struct {
 // New 校验配置并创建客户端。
 func New(cfg Config) (*Client, error) {
 	if cfg.RelayURL == "" || cfg.Credential == "" || cfg.DaemonID == "" {
-		return nil, errors.New("relayclient: relay_url / credential / daemon_id 均不能为空")
+		return nil, errors.New("relayclient: relay_url / credential / daemon_id must not be empty")
 	}
 	if cfg.WAL == nil || cfg.Registry == nil {
-		return nil, errors.New("relayclient: 缺少 WAL 或 Registry")
+		return nil, errors.New("relayclient: missing WAL or Registry")
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -138,7 +138,7 @@ func (c *Client) Run(ctx context.Context) error {
 			backoff = c.cfg.BackoffMin
 		}
 		wait := jitter(backoff)
-		c.log.Warn("relay 连接断开，稍后重连", "err", err, "retry_in", wait)
+		c.log.Warn("relay connection lost, reconnecting soon", "err", err, "retry_in", wait)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -165,13 +165,13 @@ func (c *Client) runOnce(ctx context.Context) error {
 	cancelDial()
 	if err != nil {
 		if resp != nil {
-			return fmt.Errorf("relayclient: 连接失败（HTTP %d）: %w", resp.StatusCode, err)
+			return fmt.Errorf("relayclient: connect failed (HTTP %d): %w", resp.StatusCode, err)
 		}
-		return fmt.Errorf("relayclient: 连接失败: %w", err)
+		return fmt.Errorf("relayclient: connect failed: %w", err)
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(maxMessageBytes)
-	c.log.Info("已连接 relay", "url", target)
+	c.log.Info("connected to relay", "url", target)
 
 	hello := wire.Hello{
 		V: wire.Version, Kind: wire.KindHello, MsgID: newMsgID(),
@@ -224,7 +224,7 @@ func (c *Client) writeLoop(ctx context.Context, conn *websocket.Conn) error {
 			c.writeMu.Unlock()
 			cancel()
 			if err != nil {
-				return fmt.Errorf("relayclient: 心跳失败: %w", err)
+				return fmt.Errorf("relayclient: ping failed: %w", err)
 			}
 		}
 	}
@@ -260,7 +260,7 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		}
 		msg, err := wire.Decode(data)
 		if err != nil {
-			c.log.Warn("收到无法解析的 relay 消息", "err", err)
+			c.log.Warn("failed to decode relay message", "err", err)
 			continue
 		}
 
@@ -270,7 +270,7 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		case *wire.Ack:
 			c.handleAck(m)
 		case *wire.HelloAck:
-			c.log.Debug("relay 已确认握手")
+			c.log.Debug("relay acknowledged handshake")
 		case *wire.Ping:
 			_ = c.writeJSON(ctx, conn, wire.Pong{
 				V: wire.Version, Kind: wire.KindPong, RefTime: m.TS, TS: c.cfg.Now().Unix(),
@@ -278,7 +278,7 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		case *wire.Pong:
 			// 心跳应答，无需处理。
 		default:
-			c.log.Debug("忽略 relay 消息", "kind", msgKind(msg))
+			c.log.Debug("ignoring relay message", "kind", msgKind(msg))
 		}
 	}
 }
@@ -291,9 +291,9 @@ func (c *Client) handleDecision(ctx context.Context, conn *websocket.Conn, d *wi
 		Status: ackStatus(res.Status), TS: c.cfg.Now().Unix(),
 	}
 	if err := c.writeJSON(ctx, conn, ack); err != nil {
-		c.log.Warn("回写决策 ack 失败", "approval_id", d.ApprovalID, "err", err)
+		c.log.Warn("failed to send decision ack", "approval_id", d.ApprovalID, "err", err)
 	}
-	c.log.Info("收到手机决策", "approval_id", d.ApprovalID, "decision", d.Decision, "status", res.Status)
+	c.log.Info("received decision from phone", "approval_id", d.ApprovalID, "decision", d.Decision, "status", res.Status)
 }
 
 func (c *Client) handleAck(a *wire.Ack) {
@@ -301,7 +301,7 @@ func (c *Client) handleAck(a *wire.Ack) {
 		return
 	}
 	if err := c.cfg.WAL.Ack(a.EventID); err != nil {
-		c.log.Warn("清理 WAL 失败", "event_id", a.EventID, "err", err)
+		c.log.Warn("failed to clean up WAL", "event_id", a.EventID, "err", err)
 	}
 	c.mu.Lock()
 	delete(c.inFlight, a.EventID)
@@ -368,7 +368,7 @@ func msgKind(v any) string {
 func wsURL(base string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil {
-		return "", fmt.Errorf("relayclient: relay_url 无效: %w", err)
+		return "", fmt.Errorf("relayclient: invalid relay_url: %w", err)
 	}
 	switch u.Scheme {
 	case "https":
@@ -377,10 +377,10 @@ func wsURL(base string) (string, error) {
 		u.Scheme = "ws"
 	case "wss", "ws":
 	default:
-		return "", fmt.Errorf("relayclient: 不支持的 relay_url scheme %q", u.Scheme)
+		return "", fmt.Errorf("relayclient: unsupported relay_url scheme %q", u.Scheme)
 	}
 	if u.Host == "" {
-		return "", errors.New("relayclient: relay_url 缺少主机名")
+		return "", errors.New("relayclient: relay_url missing host")
 	}
 	path := strings.TrimRight(u.Path, "/")
 	if !strings.HasSuffix(path, "/ws/daemon") {

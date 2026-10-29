@@ -49,7 +49,7 @@ type Paths struct {
 func DefaultPaths() (Paths, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return Paths{}, fmt.Errorf("config: 无法定位用户配置目录: %w", err)
+		return Paths{}, fmt.Errorf("config: cannot locate user config directory: %w", err)
 	}
 	return Paths{Dir: filepath.Join(base, "devpilot-hook")}, nil
 }
@@ -98,11 +98,11 @@ func Load(p Paths) (*Config, error) {
 		return Default(), nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("config: 读取失败: %w", err)
+		return nil, fmt.Errorf("config: read failed: %w", err)
 	}
 	cfg := Default()
 	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("config: 解析失败（拒绝继续，以免覆盖损坏的配置）: %w", err)
+		return nil, fmt.Errorf("config: parse failed (refusing to continue to avoid overwriting a corrupted config): %w", err)
 	}
 	if err := cfg.Normalize(); err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func (c *Config) Normalize() error {
 		c.ApprovalMode = d.ApprovalMode
 	}
 	if !ApprovalMode(c.ApprovalMode).Valid() {
-		return fmt.Errorf("config: 未知审批模式 %q", c.ApprovalMode)
+		return fmt.Errorf("config: unknown approval mode %q", c.ApprovalMode)
 	}
 	if len(c.Agents) == 0 {
 		c.Agents = d.Agents
@@ -136,7 +136,7 @@ func (c *Config) Normalize() error {
 	}
 	// 端口必须落在一个安全范围内；0 表示随机端口，由 serve 写回。
 	if c.GatewayPort < 0 || c.GatewayPort > 65535 {
-		return fmt.Errorf("config: 端口越界 %d", c.GatewayPort)
+		return fmt.Errorf("config: port out of range %d", c.GatewayPort)
 	}
 	return nil
 }
@@ -169,12 +169,12 @@ func LoadOrCreateToken(p Paths) (string, error) {
 	if err == nil {
 		token := string(data)
 		if len(token) < 32 {
-			return "", fmt.Errorf("config: 本地 token 过短，疑似损坏")
+			return "", fmt.Errorf("config: local token too short, likely corrupted")
 		}
 		return token, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("config: 读取本地 token 失败: %w", err)
+		return "", fmt.Errorf("config: failed to read local token: %w", err)
 	}
 	token := id.RandomHex(32)
 	if err := WriteAtomic(p.TokenPath(), []byte(token), 0o600); err != nil {
@@ -190,11 +190,11 @@ func LoadOrCreateToken(p Paths) (string, error) {
 func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("config: 创建目录失败: %w", err)
+		return fmt.Errorf("config: failed to create directory: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
-		return fmt.Errorf("config: 创建临时文件失败: %w", err)
+		return fmt.Errorf("config: failed to create temp file: %w", err)
 	}
 	tmpName := tmp.Name()
 	cleanup := func() {
@@ -203,23 +203,23 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := tmp.Chmod(perm); err != nil {
 		cleanup()
-		return fmt.Errorf("config: 设置权限失败: %w", err)
+		return fmt.Errorf("config: failed to set permissions: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		cleanup()
-		return fmt.Errorf("config: 写入临时文件失败: %w", err)
+		return fmt.Errorf("config: failed to write temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		cleanup()
-		return fmt.Errorf("config: fsync 失败: %w", err)
+		return fmt.Errorf("config: fsync failed: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
-		return fmt.Errorf("config: 关闭临时文件失败: %w", err)
+		return fmt.Errorf("config: failed to close temp file: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)
-		return fmt.Errorf("config: 原子替换失败: %w", err)
+		return fmt.Errorf("config: atomic replace failed: %w", err)
 	}
 	return nil
 }

@@ -246,7 +246,7 @@ func TestJitterBounds(t *testing.T) {
 }
 
 func TestNewValidation(t *testing.T) {
-	if _, err := New(Config{}); err == nil || !strings.Contains(err.Error(), "不能为空") {
+	if _, err := New(Config{}); err == nil || !strings.Contains(err.Error(), "must not be empty") {
 		t.Fatalf("缺配置应报错: %v", err)
 	}
 }

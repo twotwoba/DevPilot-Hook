@@ -215,7 +215,7 @@ func TestUnpairRevokesOnRelay(t *testing.T) {
 	if gotAuth != "Bearer "+cred {
 		t.Fatalf("Authorization = %q", gotAuth)
 	}
-	if !strings.Contains(stdout.String(), "已吊销") {
+	if !strings.Contains(stdout.String(), "revoked") {
 		t.Fatalf("stdout = %s", stdout.String())
 	}
 

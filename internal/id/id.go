@@ -28,7 +28,7 @@ func NewAt(t time.Time) string {
 	if _, err := rand.Read(b[6:]); err != nil {
 		// crypto/rand 在正常系统上不会失败；若失败，时间戳部分仍可保证唯一性不足，
 		// 因此这里用 panic 暴露环境问题，而不是静默生成可预测 ID。
-		panic("id: 读取随机数失败: " + err.Error())
+		panic("id: failed to read random bytes: " + err.Error())
 	}
 	b[6] = (b[6] & 0x0f) | 0x70 // version 7
 	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
@@ -50,7 +50,7 @@ func NewAt(t time.Time) string {
 func RandomHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		panic("id: 读取随机数失败: " + err.Error())
+		panic("id: failed to read random bytes: " + err.Error())
 	}
 	return hex.EncodeToString(b)
 }

@@ -45,16 +45,16 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		printUsage(stdout)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "未知命令: %s\n\n", args[0])
+		fmt.Fprintf(stderr, "unknown command: %s\n\n", args[0])
 		printUsage(stderr)
 		return 2
 	}
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `devpilot-hook —— DevPilot 的本地 hook 守护进程
+	fmt.Fprint(w, `devpilot-hook - local hook daemon for DevPilot
 
-用法:
+usage:
   devpilot-hook install    [--agent claude,codex] [--approval-mode permission-request|pre-tool-use] [--dir PATH]
   devpilot-hook uninstall  [--agent claude,codex] [--purge] [--dir PATH]
   devpilot-hook pair       [--relay https://relay.example.com] [--no-qr] [--dir PATH]
@@ -62,14 +62,14 @@ func printUsage(w io.Writer) {
   devpilot-hook serve      [--dir PATH] [--foreground]
   devpilot-hook doctor     [--json] [--dir PATH]
   devpilot-hook service    install|uninstall|status [--dir PATH]
-  devpilot-hook hook       claude|codex     （由 Agent 配置调用，读 stdin）
+  devpilot-hook hook       claude|codex     (invoked from agent config, reads stdin)
   devpilot-hook version
 `)
 }
 
 // pathsFlag 为子命令注册 --dir 并解析。
 func pathsFlag(fs *flag.FlagSet, dir *string) {
-	fs.StringVar(dir, "dir", "", "状态目录（默认使用用户配置目录）")
+	fs.StringVar(dir, "dir", "", "state directory (defaults to the user config directory)")
 }
 
 // resolvePaths 返回指定目录或默认目录。
@@ -84,7 +84,7 @@ func resolvePaths(dir string) (config.Paths, error) {
 func homeFile(parts ...string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("cli: 无法定位用户主目录: %w", err)
+		return "", fmt.Errorf("cli: cannot locate user home directory: %w", err)
 	}
 	return filepath.Join(append([]string{home}, parts...)...), nil
 }
@@ -100,11 +100,11 @@ func parseAgents(s string) ([]string, error) {
 		case "claude", "codex":
 			out = append(out, part)
 		default:
-			return nil, fmt.Errorf("未知 agent: %s（只支持 claude、codex）", part)
+			return nil, fmt.Errorf("unknown agent: %s (only claude and codex are supported)", part)
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("至少选择一个 agent")
+		return nil, fmt.Errorf("select at least one agent")
 	}
 	return out, nil
 }

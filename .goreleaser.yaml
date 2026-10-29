@@ -82,4 +82,4 @@ release:
   # 草案状态下外部下载会 404，用户装到一半失败。
   draft: false
   footer: |
-    安装方式见 README（Homebrew Cask / install.sh / deb+rpm）。
+    See README for installation options (Homebrew Cask / install.sh / deb+rpm).

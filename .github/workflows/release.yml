@@ -21,7 +21,7 @@ jobs:
           cache: true
 
       # 发布前先确保依赖可拉取：DevPilot-APNS 必须已有对应 tag。
-      - name: 校验依赖
+      - name: Verify dependencies
         run: go mod download
 
       - uses: goreleaser/goreleaser-action@v6
