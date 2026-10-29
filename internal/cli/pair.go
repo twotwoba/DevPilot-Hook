@@ -130,14 +130,16 @@ func pairQRPayload(relayURL, code string) string {
 	return "devpilot://pair?v=1&" + q.Encode()
 }
 
-// renderPairQR 把 payload 渲染成终端半块字符画;
+// renderPairQR 把 payload 渲染成终端半块字符画（ToSmallString：1 字符/模块、
+// 2 模块/行——v6 码约 25 行 × 49 列，任何终端窗口都放得下；ToString 的全尺寸
+// 变体是 2 字符/模块 × 1 行/模块，宽高翻倍直接糊满窗口）。
 // payload 由本地拼装,渲染失败静默降级(配对码文本始终在下方)。
 func renderPairQR(w io.Writer, payload string) {
 	qr, err := qrcode.New(payload, qrcode.Low)
 	if err != nil {
 		return
 	}
-	for line := range strings.SplitSeq(strings.TrimRight(qr.ToString(false), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(qr.ToSmallString(false), "\n"), "\n") {
 		fmt.Fprintf(w, "    %s\n", line)
 	}
 	fmt.Fprintln(w)

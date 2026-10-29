@@ -164,6 +164,20 @@ func TestRenderPairQR(t *testing.T) {
 	if len(s) < 100 || !strings.ContainsAny(s, "▀▄█") {
 		t.Fatalf("二维码渲染异常: %q", s[:min(80, len(s))])
 	}
+	// 尺寸钉子:半块渲染下该 payload(v6 码,49×49 模块含静区)应约 25 行 ×
+	// 49 列。ToString 全尺寸变体(2 字符/模块 × 1 行/模块)是 49 行 × 98 列,
+	// 会糊满终端窗口——误用回去时此断言必须红。
+	const maxLines, maxWidth = 30, 60
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > maxLines {
+		t.Fatalf("二维码行数 %d 超过半块渲染上限 %d(误用全尺寸渲染?)", len(lines), maxLines)
+	}
+	for i, line := range lines {
+		if w := len([]rune(strings.TrimRight(line, " "))); w > maxWidth {
+			t.Fatalf("第 %d 行宽度 %d 超过半块渲染上限 %d(误用全尺寸渲染?)", i+1, w, maxWidth)
+		}
+	}
+	t.Logf("渲染尺寸:%d 行,可直接肉眼核验:\n%s", len(lines), s)
 }
 
 // TestUnpairRevokesOnRelay unpair 应尽力调 DELETE /v1/daemon;
