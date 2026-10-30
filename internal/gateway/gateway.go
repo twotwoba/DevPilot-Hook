@@ -20,6 +20,7 @@ import (
 	"github.com/twotwoba/DevPilot-Hook/internal/agent"
 	"github.com/twotwoba/DevPilot-Hook/internal/config"
 	"github.com/twotwoba/DevPilot-Hook/internal/event"
+	"github.com/twotwoba/DevPilot-Hook/internal/id"
 	"github.com/twotwoba/DevPilot-Hook/internal/queue"
 )
 
@@ -45,6 +46,9 @@ type Params struct {
 	Publisher         Publisher
 	Now               func() time.Time
 	Logger            *slog.Logger
+	// HostInfo 返回主机身份快照(serve 维护的 provider,含 TTL 刷新);
+	// nil 时跳过盖章(测试/旧路径)。
+	HostInfo func() agent.HostInfo
 	// ExtraStatus 供 doctor 汇总上行通道状态。
 	ExtraStatus func() map[string]any
 }
@@ -228,6 +232,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	env := ev.Envelope
+	s.stampHostContext(r, &env, in)
 
 	// 高频工具遥测做固定窗口节流；审批、任务完成、会话边界永不丢弃。
 	if env.Type == wire.EventToolRunning || env.Type == wire.EventToolFinished {
@@ -262,6 +267,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	result := s.p.Registry.Wait(r.Context(), env.ApprovalID)
 	switch result.Status {
 	case event.StatusApproved, event.StatusDenied:
+		// approved/denied 不发 close:决策经由 relay,relay 落地时已合成广播。
 		out, err := adapter.RenderDecision(ev.HookEvent, result.Decision)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -270,8 +276,57 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(append(out, '\n'))
 	default:
-		// 超时 / 取消 / 未知：不输出任何 decision，让 Agent 回落原生询问。
+		// 超时 / 取消：不输出任何 decision，让 Agent 回落原生询问；
+		// 但手机侧横幅与 LA 需要收场——发 close(与 relay 决策/清理两条
+		// 合成路径共用确定性 event_id,inbox 去重自然收敛)。
+		s.emitClose(env, result.Status)
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// stampHostContext 把主机身份与会话上下文盖进事件 payload:
+// hostname/host_ip/user/cwd 供 App 收件箱路由(匹配 HostRecord → 直进会话);
+// tmux 会话名来自 hook 子进程的专用 header(仅审批候选事件探测);
+// approval_required 额外盖 expires_at——等待窗终点,relay pending TTL、
+// APNs 过期、LA 倒计时全链对齐这一处时间源。
+func (s *Server) stampHostContext(r *http.Request, env *wire.Envelope, in agent.Input) {
+	if s.p.HostInfo != nil {
+		h := s.p.HostInfo()
+		env.Payload.Hostname = h.Hostname
+		env.Payload.HostIP = h.PrimaryIP
+		env.Payload.User = h.User
+	}
+	env.Payload.Cwd = in.Cwd
+	if ts := strings.TrimSpace(r.Header.Get("X-DevPilot-Tmux-Session")); ts != "" {
+		env.Payload.TmuxSession = ts
+	}
+	if env.Type == wire.EventApprovalRequired {
+		env.ExpiresAt = s.p.Now().Unix() + int64(s.p.ApprovalTimeout/time.Second)
+	}
+}
+
+// closeReason 把本端 Wait 结果映射为 wire 关闭原因。
+func closeReason(st event.Status) string {
+	if st == event.StatusExpired {
+		return wire.CloseReasonExpired
+	}
+	// cancelled(终端 Ctrl-C / hook 退出)与其余未知终态一律按取消处理。
+	return wire.CloseReasonCancelled
+}
+
+// emitClose 合成 approval_closed 事件并入队(WAL 先行,断网也有补发)。
+// 用独立 context:取消场景里 hook 客户端已断开、r.Context() 已取消,
+// 上行仍须尝试;失败由 WAL 兜底,relay 侧 event_id 去重防重放重复。
+func (s *Server) emitClose(env wire.Envelope, status event.Status) {
+	closeEnv := env
+	closeEnv.MsgID = id.New()
+	closeEnv.EventID = "close-" + env.ApprovalID
+	closeEnv.Type = wire.EventApprovalClosed
+	closeEnv.ExpiresAt = 0
+	closeEnv.TS = s.p.Now().Unix()
+	closeEnv.Payload.StatusText = closeReason(status)
+	if err := s.enqueue(context.Background(), closeEnv); err != nil {
+		s.log.Warn("failed to enqueue approval_closed", "approval_id", env.ApprovalID, "err", err)
 	}
 }
 

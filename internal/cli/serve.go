@@ -70,6 +70,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		wire.AgentCodex:  codex.Adapter{},
 	}
 
+	// brew 升级只换二进制、不重跑 install:hooks 文件里旧的超时(300s)会
+	// 让 30 分钟等待窗失效。启动时幂等重写自愈;失败只警告,不阻塞 serve。
+	selfHealHooks(cfg, stderr)
+
+	hostInfo := agent.NewHostInfoProvider()
+
 	var publisher gateway.Publisher
 	var relay *relayclient.Client
 	if cfg.RelayURL != "" && cfg.DaemonCredential != "" {
@@ -99,6 +105,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		Registry:          reg,
 		WAL:               wal,
 		Publisher:         publisher,
+		HostInfo:          hostInfo.Get,
 		ExtraStatus: func() map[string]any {
 			if relay == nil {
 				return map[string]any{"relay_configured": false}
@@ -133,7 +140,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		// 端口被占用时退回随机端口，并把实际端口写回配置。
 		if isAddrInUse(err) {
 			fmt.Fprintf(stderr, "port %d in use, falling back to a random port\n", cfg.GatewayPort)
-			return serveOnRandomPort(ctx, cfg, paths, token, wal, reg, adapters, publisher, timeout, stdout, stderr)
+			return serveOnRandomPort(ctx, cfg, paths, token, wal, reg, adapters, publisher, hostInfo, timeout, stdout, stderr)
 		}
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -144,7 +151,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 func serveOnRandomPort(
 	ctx context.Context, cfg *config.Config, paths config.Paths, token string,
 	wal *queue.WAL, reg *event.Registry, adapters map[wire.Agent]agent.Adapter,
-	publisher gateway.Publisher, timeout time.Duration, stdout, stderr io.Writer,
+	publisher gateway.Publisher, hostInfo *agent.HostInfoProvider,
+	timeout time.Duration, stdout, stderr io.Writer,
 ) int {
 	gw, err := gateway.New(gateway.Params{
 		Addr:              "127.0.0.1:0",
@@ -157,6 +165,7 @@ func serveOnRandomPort(
 		Registry:          reg,
 		WAL:               wal,
 		Publisher:         publisher,
+		HostInfo:          hostInfo.Get,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -198,6 +207,32 @@ func serveOnRandomPort(
 		return 1
 	}
 	return 0
+}
+
+// selfHealHooks 启动时幂等重写 hooks 条目(brew 升级不重跑 install 的保险):
+// 内容与 install 产物一致,无变化时不落盘。找不到稳定可执行文件
+//(从版本目录直接运行)或目标文件损坏时只警告,不阻塞 serve。
+func selfHealHooks(cfg *config.Config, stderr io.Writer) {
+	exe, err := findStableExecutable()
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: skipping hooks self-heal: %v\n", err)
+		return
+	}
+	mode := config.ApprovalMode(cfg.ApprovalMode)
+	for _, name := range cfg.Agents {
+		path, err := agentConfigPath(name)
+		if err != nil {
+			continue
+		}
+		changed, err := installHooksFile(path, name, exe, mode)
+		switch {
+		case err != nil:
+			fmt.Fprintf(stderr, "warning: hooks self-heal failed for %s: %v\n", name, err)
+		case changed:
+			fmt.Fprintf(stderr, "refreshed %s hooks (timeout %ds) -> %s\n",
+				name, config.DefaultApprovalTimeoutSeconds+60, path)
+		}
+	}
 }
 
 func janitor(ctx context.Context, reg *event.Registry) {

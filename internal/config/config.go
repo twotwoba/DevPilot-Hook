@@ -15,8 +15,11 @@ import (
 
 // 默认值。
 const (
-	DefaultGatewayPort            = 24543
-	DefaultApprovalTimeoutSeconds = wire.ApprovalWaitSeconds
+	DefaultGatewayPort = 24543
+	// DefaultApprovalTimeoutSeconds 对齐 wire 的默认等待窗(30 分钟):
+	// 审批「随时可批」,超时不消失而是转 Missed 留在收件箱。
+	// 用户已自定义 approval_timeout_seconds 的配置不受影响(Normalize 只填 ≤0)。
+	DefaultApprovalTimeoutSeconds = wire.DefaultApprovalWaitSeconds
 	DefaultToolEventInterval      = 300
 	DefaultApprovalMode           = string(ApprovalModePermissionRequest)
 

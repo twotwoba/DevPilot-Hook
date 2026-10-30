@@ -47,6 +47,19 @@ func (f *fakePublisher) count() int {
 	return len(f.events)
 }
 
+// eventsOfType 返回已上行事件中指定类型的快照。
+func (f *fakePublisher) eventsOfType(typ wire.EventType) []wire.Envelope {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []wire.Envelope
+	for _, env := range f.events {
+		if env.Type == typ {
+			out = append(out, env)
+		}
+	}
+	return out
+}
+
 type testEnv struct {
 	server  *Server
 	http    *httptest.Server
@@ -57,6 +70,11 @@ type testEnv struct {
 }
 
 func newTestEnv(t *testing.T, timeout time.Duration, interval time.Duration) *testEnv {
+	return newTestEnvOpts(t, timeout, interval, nil)
+}
+
+// newTestEnvOpts 允许覆盖额外 Params(HostInfo / Now 等新依赖)。
+func newTestEnvOpts(t *testing.T, timeout time.Duration, interval time.Duration, extra func(*Params)) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 	wal, err := queue.Open(filepath.Join(dir, "queue.wal"), queue.Options{})
@@ -67,7 +85,7 @@ func newTestEnv(t *testing.T, timeout time.Duration, interval time.Duration) *te
 
 	pub := &fakePublisher{ch: make(chan wire.Envelope, 32)}
 	reg := event.NewRegistry()
-	srv, err := New(Params{
+	p := Params{
 		Addr:              "127.0.0.1:0",
 		Token:             testToken,
 		DaemonID:          "dd_test",
@@ -78,7 +96,11 @@ func newTestEnv(t *testing.T, timeout time.Duration, interval time.Duration) *te
 		Registry:          reg,
 		WAL:               wal,
 		Publisher:         pub,
-	})
+	}
+	if extra != nil {
+		extra(&p)
+	}
+	srv, err := New(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +127,7 @@ type reqOpts struct {
 	method string
 	path   string
 	noBody bool
+	tmux   string
 }
 
 func (e *testEnv) do(t *testing.T, o reqOpts) (*http.Response, []byte) {
@@ -132,6 +155,9 @@ func (e *testEnv) do(t *testing.T, o reqOpts) (*http.Response, []byte) {
 	}
 	if o.origin != "" {
 		req.Header.Set("Origin", o.origin)
+	}
+	if o.tmux != "" {
+		req.Header.Set("X-DevPilot-Tmux-Session", o.tmux)
 	}
 	resp, err := e.http.Client().Do(req)
 	if err != nil {
@@ -338,6 +364,23 @@ func waitEvent(t *testing.T, ch <-chan wire.Envelope) wire.Envelope {
 	}
 }
 
+// waitClose 等待 close 事件;普通事件先到则跳过(顺序不保证)。
+func waitClose(t *testing.T, ch <-chan wire.Envelope) wire.Envelope {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case env := <-ch:
+			if env.Type == wire.EventApprovalClosed {
+				return env
+			}
+		case <-deadline:
+			t.Fatal("等待 approval_closed 超时")
+			return wire.Envelope{}
+		}
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	data, err := json.Marshal(v)
@@ -345,4 +388,145 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestHostContextStamped 验证主机身份/会话上下文/expires_at 盖章:
+// approval_required 盖全量字段,普通工具事件只盖身份、不盖 expires_at/tmux。
+func TestHostContextStamped(t *testing.T) {
+	fixed := time.Unix(1_700_000_000, 0)
+	e := newTestEnvOpts(t, 2*time.Minute, 0, func(p *Params) {
+		p.Now = func() time.Time { return fixed }
+		p.HostInfo = func() agent.HostInfo {
+			return agent.HostInfo{Hostname: "eric-mbp.lan", PrimaryIP: "192.168.1.23", User: "eric"}
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		resp, body := e.do(t, reqOpts{
+			agent: "claude", token: testToken, tmux: "main",
+			body: fixture(t, "permission_request.json"),
+		})
+		if resp.StatusCode != http.StatusNoContent {
+			t.Errorf("hook 状态 = %d %s", resp.StatusCode, body)
+		}
+	}()
+
+	env := waitEvent(t, e.pub.ch)
+	if env.Type != wire.EventApprovalRequired {
+		t.Fatalf("事件类型 = %s", env.Type)
+	}
+	if env.Payload.Hostname != "eric-mbp.lan" || env.Payload.HostIP != "192.168.1.23" || env.Payload.User != "eric" {
+		t.Fatalf("主机身份缺失: %+v", env.Payload)
+	}
+	if env.Payload.Cwd != "/Users/eric/Dev/demo-app" {
+		t.Fatalf("cwd = %q", env.Payload.Cwd)
+	}
+	if env.Payload.TmuxSession != "main" {
+		t.Fatalf("tmux 会话 = %q", env.Payload.TmuxSession)
+	}
+	if env.ExpiresAt != fixed.Add(2*time.Minute).Unix() {
+		t.Fatalf("expires_at = %d, want %d", env.ExpiresAt, fixed.Add(2*time.Minute).Unix())
+	}
+	<-done
+
+	// 工具事件:身份照盖,但 expires_at 与 tmux 不适用。
+	resp, body := e.do(t, reqOpts{agent: "claude", token: testToken, body: fixture(t, "pre_tool_use.json")})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("工具事件状态 = %d %s", resp.StatusCode, body)
+	}
+	tool := e.wal.Pending()[e.wal.Len()-1]
+	if tool.Type != wire.EventToolRunning {
+		t.Fatalf("工具事件类型 = %s", tool.Type)
+	}
+	if tool.Payload.Hostname != "eric-mbp.lan" || tool.Payload.Cwd == "" {
+		t.Fatalf("工具事件应带主机身份: %+v", tool.Payload)
+	}
+	if tool.ExpiresAt != 0 || tool.Payload.TmuxSession != "" {
+		t.Fatalf("工具事件不应盖 expires_at/tmux: %+v", tool)
+	}
+}
+
+// TestApprovalTimeoutEmitsClose 超时路径:hook 拿空 204 的同时,
+// close(expired) 经 WAL/上行发出,EventID 确定性派生。
+func TestApprovalTimeoutEmitsClose(t *testing.T) {
+	e := newTestEnv(t, 50*time.Millisecond, 0)
+
+	resp, body := e.do(t, reqOpts{agent: "claude", token: testToken, body: fixture(t, "permission_request.json")})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("超时应 204，实际 %d %s", resp.StatusCode, body)
+	}
+
+	closed := waitClose(t, e.pub.ch)
+	if closed.EventID != "close-"+closed.ApprovalID {
+		t.Fatalf("close EventID = %q (approval=%s)", closed.EventID, closed.ApprovalID)
+	}
+	if closed.Payload.StatusText != wire.CloseReasonExpired {
+		t.Fatalf("close 原因 = %q", closed.Payload.StatusText)
+	}
+	if closed.ExpiresAt != 0 {
+		t.Fatalf("close 不应带 expires_at: %d", closed.ExpiresAt)
+	}
+	if closed.MsgID == "" || closed.Type != wire.EventApprovalClosed {
+		t.Fatalf("close 信封不完整: %+v", closed)
+	}
+}
+
+// TestApprovalCancelEmitsClose 终端 Ctrl-C 路径:hook 客户端断开
+// → ctx 取消 → cancelled close 仍要上行(独立 context)。
+func TestApprovalCancelEmitsClose(t *testing.T) {
+	e := newTestEnv(t, time.Minute, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		e.http.URL+"/v1/hook/claude", bytes.NewReader(fixture(t, "permission_request.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "127.0.0.1:24543"
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	go func() { _, _ = e.http.Client().Do(req) }()
+
+	env := waitEvent(t, e.pub.ch)
+	cancel()
+
+	closed := waitClose(t, e.pub.ch)
+	if closed.EventID != "close-"+env.ApprovalID {
+		t.Fatalf("close EventID = %q (approval=%s)", closed.EventID, env.ApprovalID)
+	}
+	if closed.Payload.StatusText != wire.CloseReasonCancelled {
+		t.Fatalf("close 原因 = %q", closed.Payload.StatusText)
+	}
+}
+
+// TestApprovalDecisionEmitsNoClose 决策路径不发自产 close:
+// relay 落地决策时会合成,再发就是重复(靠下游去重兜底不如源头不发)。
+func TestApprovalDecisionEmitsNoClose(t *testing.T) {
+	e := newTestEnv(t, 3*time.Second, 0)
+
+	done := make(chan int, 1)
+	go func() {
+		resp, _ := e.do(t, reqOpts{agent: "claude", token: testToken, body: fixture(t, "permission_request.json")})
+		done <- resp.StatusCode
+	}()
+	env := waitEvent(t, e.pub.ch)
+
+	resp, body := e.do(t, reqOpts{
+		path: "/v1/decisions", token: testToken,
+		body: mustJSON(t, wire.Decision{
+			V: wire.Version, Kind: wire.KindDecision, MsgID: "m1",
+			ApprovalID: env.ApprovalID, Decision: wire.DecisionAllow, TS: time.Now().Unix(),
+		}),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("决策提交失败: %d %s", resp.StatusCode, body)
+	}
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("hook 期望 200，实际 %d", code)
+	}
+	// Wait 已返回、响应已发完,事件列表定格:只有 approval_required。
+	if got := e.pub.eventsOfType(wire.EventApprovalClosed); len(got) != 0 {
+		t.Fatalf("决策路径不应发 close: %+v", got)
+	}
 }
