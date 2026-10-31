@@ -49,6 +49,32 @@ type harness struct {
 
 	relayLog *lockedBuffer
 	serveLog *lockedBuffer
+
+	// buffered 暂存「本轮等待目标之外」的 WSS 消息:决策 ack 与 close 广播
+	// 存在竞态,固定顺序逐条读会消费掉别人的消息。各等待器先扫缓冲再读连接。
+	buffered []any
+}
+
+// readMatching 带过滤的消息读取:先扫缓冲,再从连接读;不匹配的入缓冲供
+// 后续等待者消费(子测试串行跑,无并发,不需要锁)。
+func (h *harness) readMatching(t *testing.T, timeout time.Duration, what string, match func(any) bool) any {
+	t.Helper()
+	for i, msg := range h.buffered {
+		if match(msg) {
+			h.buffered = append(h.buffered[:i], h.buffered[i+1:]...)
+			return msg
+		}
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		msg := readMsg(t, h.app, time.Until(deadline))
+		if match(msg) {
+			return msg
+		}
+		h.buffered = append(h.buffered, msg)
+	}
+	t.Fatalf("未等到 %s\nrelay 日志:\n%s\ndaemon 日志:\n%s", what, h.relayLog.String(), h.serveLog.String())
+	return nil
 }
 
 // lockedBuffer 让命令输出可以被测试与 exec goroutine 安全并发访问。
@@ -79,8 +105,11 @@ func TestApprovalRoundTrip(t *testing.T) {
 	t.Run("deny", func(t *testing.T) {
 		h.runApproval(t, "toolu_e2e_deny", wire.DecisionDeny, `"behavior":"deny"`)
 	})
-	t.Run("timeout 无输出", func(t *testing.T) {
+	t.Run("timeout 无输出 + close(expired)", func(t *testing.T) {
 		h.runTimeout(t, "toolu_e2e_timeout")
+	})
+	t.Run("REST 决策(LA 锁屏按钮通道)", func(t *testing.T) {
+		h.runRESTDecision(t, "toolu_e2e_rest", wire.DecisionAllow, `"behavior":"allow"`)
 	})
 }
 
@@ -258,6 +287,7 @@ func (h *harness) runApproval(t *testing.T, toolUseID string, decision wire.Deci
 	t.Helper()
 	cmd, stdout, stderr := h.startHook(t, toolUseID)
 	env := h.waitApproval(t, toolUseID)
+	h.assertEnriched(t, env)
 	h.sendDecision(t, env.ApprovalID, decision)
 	h.waitHookExit(t, cmd, 20*time.Second)
 
@@ -271,14 +301,54 @@ func (h *harness) runApproval(t *testing.T, toolUseID string, decision wire.Deci
 	if !strings.Contains(got, `"hookEventName":"PermissionRequest"`) {
 		t.Fatalf("hook 输出事件名不匹配: %s", got)
 	}
+	// relay 受理即合成 approval_closed：决策路径的收场广播。
+	reason := wire.CloseReasonApproved
+	if decision == wire.DecisionDeny {
+		reason = wire.CloseReasonDenied
+	}
+	h.waitClose(t, env.ApprovalID, reason)
 	h.waitQueueDrained(t)
 }
 
-// runTimeout 验证超时只会产生「无决策」。
+// runRESTDecision 走 POST /v1/decisions（LA 锁屏按钮/通知快捷钮的通道，
+// 无 WSS 依赖）：受理语义与 WSS 决策完全一致，close 广播同源。
+func (h *harness) runRESTDecision(t *testing.T, toolUseID string, decision wire.DecisionKind, wantOut string) {
+	t.Helper()
+	cmd, stdout, stderr := h.startHook(t, toolUseID)
+	env := h.waitApproval(t, toolUseID)
+	h.assertEnriched(t, env)
+
+	if status := h.restDecision(t, env.ApprovalID, decision, h.appCredential); status != string(wire.AckAccepted) {
+		t.Fatalf("REST 决策状态 = %s，期望 %s", status, wire.AckAccepted)
+	}
+	h.waitHookExit(t, cmd, 20*time.Second)
+	if got := stdout.String(); !strings.Contains(got, wantOut) {
+		t.Fatalf("hook 输出缺少 %s，实际: %s（stderr: %s）", wantOut, got, stderr.String())
+	}
+	reason := wire.CloseReasonApproved
+	if decision == wire.DecisionDeny {
+		reason = wire.CloseReasonDenied
+	}
+	h.waitClose(t, env.ApprovalID, reason)
+
+	// 无效凭据必须 401：REST 入口走设备认证，不是匿名端点。
+	if code, _ := h.restDecisionRaw(t, env.ApprovalID, decision, "dpa_bogus"); code != http.StatusUnauthorized {
+		t.Fatalf("无效凭据 HTTP = %d，期望 401", code)
+	}
+	// 未知审批不泄露存在性，统一 unknown（与 WSS ack 同语义）。
+	if status := h.restDecision(t, "apv_rest_unknown_"+toolUseID, decision, h.appCredential); status != string(wire.AckUnknown) {
+		t.Fatalf("未知审批 REST 状态 = %s，期望 %s", status, wire.AckUnknown)
+	}
+	h.waitQueueDrained(t)
+}
+
+// runTimeout 验证超时只会产生「无决策」，且 daemon 自发 close(expired)
+// 抵达 App——等待窗耗尽的收场不是静默消失。
 func (h *harness) runTimeout(t *testing.T, toolUseID string) {
 	t.Helper()
 	cmd, stdout, stderr := h.startHook(t, toolUseID)
-	_ = h.waitApproval(t, toolUseID)
+	env := h.waitApproval(t, toolUseID)
+	h.assertEnriched(t, env)
 	// 不下发任何决策，等待网关按 ApprovalTimeout 放弃。
 	h.waitHookExit(t, cmd, 20*time.Second)
 	if got := strings.TrimSpace(stdout.String()); got != "" {
@@ -287,6 +357,86 @@ func (h *harness) runTimeout(t *testing.T, toolUseID string) {
 	if strings.TrimSpace(stderr.String()) != "" {
 		t.Fatalf("hook 不应向 stderr 输出: %s", stderr.String())
 	}
+	h.waitClose(t, env.ApprovalID, wire.CloseReasonExpired)
+	h.waitQueueDrained(t)
+}
+
+// assertEnriched 钉死 v0.3.0 审批信封增量：主机身份（hostname/user/cwd）
+// 与按次等待窗（expires_at ≈ ts + ApprovalTimeout）——App 端路由与
+// 锁屏倒计时的依据，字段缺失即三端契约破了。
+func (h *harness) assertEnriched(t *testing.T, env *wire.Envelope) {
+	t.Helper()
+	if env.Payload.Hostname == "" {
+		t.Fatalf("审批事件缺 hostname（App 无法路由主机）: %+v", env.Payload)
+	}
+	if env.Payload.User == "" {
+		t.Fatalf("审批事件缺 user: %+v", env.Payload)
+	}
+	if env.Payload.Cwd != "/Users/e2e/demo" {
+		t.Fatalf("cwd = %q，期望 /Users/e2e/demo", env.Payload.Cwd)
+	}
+	wantWindow := int64(approvalTimeout.Seconds())
+	window := env.ExpiresAt - env.TS
+	if window < wantWindow-1 || window > wantWindow+1 {
+		t.Fatalf("expires_at 窗口 = %ds，期望 ≈%ds（ts=%d expires=%d）",
+			window, wantWindow, env.TS, env.ExpiresAt)
+	}
+}
+
+// waitClose 等待 approval_closed 广播：决策（approved/denied）、超时
+// （expired）、终端取消（cancelled）三路收场的统一断言面。确定性
+// event_id "close-<id>" 保证 daemon 自发与 relay 合成两路收敛不重复。
+func (h *harness) waitClose(t *testing.T, approvalID, wantReason string) {
+	t.Helper()
+	wantEventID := "close-" + approvalID
+	msg := h.readMatching(t, 10*time.Second, "approval_closed "+approvalID, func(m any) bool {
+		env, ok := m.(*wire.Envelope)
+		return ok && env.Type == wire.EventApprovalClosed && env.EventID == wantEventID
+	})
+	env := msg.(*wire.Envelope)
+	if env.Payload.StatusText != wantReason {
+		t.Fatalf("close 原因 = %q，期望 %q", env.Payload.StatusText, wantReason)
+	}
+	if env.Payload.Hostname == "" {
+		t.Fatalf("close 事件丢失主机路由字段: %+v", env.Payload)
+	}
+}
+
+// restDecision POST /v1/decisions 并返回响应 status 字段。
+func (h *harness) restDecision(t *testing.T, approvalID string, decision wire.DecisionKind, credential string) string {
+	t.Helper()
+	code, body := h.restDecisionRaw(t, approvalID, decision, credential)
+	if code != http.StatusOK {
+		t.Fatalf("REST 决策 HTTP %d: %s", code, body)
+	}
+	var out struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("解析 REST 决策响应失败: %v (%s)", err, body)
+	}
+	return out.Status
+}
+
+func (h *harness) restDecisionRaw(t *testing.T, approvalID string, decision wire.DecisionKind, credential string) (int, []byte) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"approval_id": approvalID,
+		"decision":    string(decision),
+	})
+	req, err := http.NewRequest(http.MethodPost, h.relayURL+"/v1/decisions", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("构造 REST 请求失败: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("REST 决策请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, data
 }
 
 func (h *harness) startHook(t *testing.T, toolUseID string) (*exec.Cmd, *lockedBuffer, *lockedBuffer) {
@@ -317,21 +467,12 @@ func (h *harness) startHook(t *testing.T, toolUseID string) (*exec.Cmd, *lockedB
 func (h *harness) waitApproval(t *testing.T, toolUseID string) *wire.Envelope {
 	t.Helper()
 	wantSession := "sess_e2e_" + toolUseID
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		msg := readMsg(t, h.app, time.Until(deadline))
-		env, ok := msg.(*wire.Envelope)
-		if !ok || env.Type != wire.EventApprovalRequired {
-			continue
-		}
-		if env.ApprovalID == "" || env.SessionID != wantSession {
-			continue
-		}
-		return env
-	}
-	t.Fatalf("未收到审批事件 %s\nrelay 日志:\n%s\ndaemon 日志:\n%s",
-		toolUseID, h.relayLog.String(), h.serveLog.String())
-	return nil
+	msg := h.readMatching(t, 20*time.Second, "审批事件 "+toolUseID, func(m any) bool {
+		env, ok := m.(*wire.Envelope)
+		return ok && env.Type == wire.EventApprovalRequired &&
+			env.ApprovalID != "" && env.SessionID == wantSession
+	})
+	return msg.(*wire.Envelope)
 }
 
 func (h *harness) sendDecision(t *testing.T, approvalID string, decision wire.DecisionKind) {
@@ -351,19 +492,13 @@ func (h *harness) sendDecisionExpect(t *testing.T, approvalID string, decision w
 	}); err != nil {
 		t.Fatalf("发送决策失败: %v", err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		msg := readMsg(t, h.app, time.Until(deadline))
-		ack, ok := msg.(*wire.Ack)
-		if !ok || ack.ApprovalID != approvalID || ack.RefMsgID != msgID {
-			continue
-		}
-		if ack.Status != want {
-			t.Fatalf("决策 ack 状态 = %s，期望 %s", ack.Status, want)
-		}
-		return
+	msg := h.readMatching(t, 10*time.Second, "决策 ack "+approvalID, func(m any) bool {
+		ack, ok := m.(*wire.Ack)
+		return ok && ack.ApprovalID == approvalID && ack.RefMsgID == msgID
+	})
+	if ack := msg.(*wire.Ack); ack.Status != want {
+		t.Fatalf("决策 ack 状态 = %s，期望 %s", ack.Status, want)
 	}
-	t.Fatalf("未收到决策 ack %s", approvalID)
 }
 
 func (h *harness) waitHookExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
