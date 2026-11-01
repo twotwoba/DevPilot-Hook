@@ -4,7 +4,6 @@ package agent
 
 import (
 	"net"
-	"os"
 	"os/user"
 	"sync"
 	"time"
@@ -18,7 +17,7 @@ const hostInfoRefreshInterval = 5 * time.Minute
 // HostInfo 是一次主机身份快照;全部字段尽力探测,失败留空,
 // 绝不因此阻塞 hook 链路。
 type HostInfo struct {
-	Hostname  string // os.Hostname()
+	Hostname  string // RoutableHostname()(内核 hostname 滤 bogon 伪值)
 	PrimaryIP string // 首个非环回内网 IPv4(RFC1918 + CGNAT/Tailscale)
 	User      string // 当前用户名
 }
@@ -55,9 +54,7 @@ func (p *HostInfoProvider) Get() HostInfo {
 // collectHostInfo 一次性探测;任何一步失败都不影响其余字段。
 func collectHostInfo() HostInfo {
 	var h HostInfo
-	if name, err := os.Hostname(); err == nil {
-		h.Hostname = name
-	}
+	h.Hostname = RoutableHostname()
 	h.PrimaryIP = primaryIPv4()
 	if u, err := user.Current(); err == nil && u.Username != "" {
 		h.User = u.Username

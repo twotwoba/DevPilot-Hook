@@ -12,12 +12,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/twotwoba/DevPilot-Hook/internal/agent"
 	"github.com/twotwoba/DevPilot-Hook/internal/config"
 	"github.com/twotwoba/DevPilot-Hook/internal/id"
 )
@@ -65,7 +65,7 @@ func runPair(args []string, stdout, stderr io.Writer) int {
 		Code:           code,
 		DaemonID:       cfg.DaemonID,
 		DaemonCredHash: hashSecret(secret),
-		DaemonName:     hostname(),
+		DaemonName:     agent.DisplayName(),
 		ExpiresAt:      expires,
 	}
 	payload, _ := json.Marshal(reqBody)
@@ -224,12 +224,4 @@ func pairingCode() (string, error) {
 	}
 	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 	return enc, nil
-}
-
-func hostname() string {
-	name, err := os.Hostname()
-	if err != nil || name == "" {
-		return "devpilot-daemon"
-	}
-	return name
 }

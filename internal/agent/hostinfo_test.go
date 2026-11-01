@@ -8,6 +8,12 @@ import (
 
 // TestHostInfoProviderTTL 未过期返回缓存,过期后重探。
 func TestHostInfoProviderTTL(t *testing.T) {
+	// 注入固定内核名,重探结果确定化(真机上内核 hostname 可能是 bogon
+	// 伪值,被 RoutableHostname 滤成空,原「重探必非空」断言会误炸)。
+	origKernel := kernelHostname
+	kernelHostname = func() string { return "fresh-host" }
+	defer func() { kernelHostname = origKernel }()
+
 	base := time.Unix(1_700_000_000, 0)
 	now := base
 	p := &HostInfoProvider{interval: time.Minute, now: func() time.Time { return now }}
@@ -19,10 +25,10 @@ func TestHostInfoProviderTTL(t *testing.T) {
 		t.Fatalf("TTL 内应返回缓存,得到 %q", got.Hostname)
 	}
 
-	// 推进时钟越过周期:触发重探,拿到真实 hostname。
+	// 推进时钟越过周期:触发重探,拿到注入的新名字。
 	now = base.Add(2 * time.Minute)
 	got := p.Get()
-	if got.Hostname == "stale-host" || got.Hostname == "" {
+	if got.Hostname != "fresh-host" {
 		t.Fatalf("过期后应重探,得到 %q", got.Hostname)
 	}
 	// 重探后回到 TTL 内,再次 Get 不应改变时间戳语义(仍是新快照)。
