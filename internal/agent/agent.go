@@ -13,6 +13,13 @@ import (
 	"github.com/twotwoba/DevPilot-Hook/internal/id"
 )
 
+// ReplySummaryRunes 是 Stop 回复摘要的详情帽（2000 runes）。
+// wire.MaxReplyRunes=80 是横幅/预览口径——收件箱详情页要求全文级,80 必出
+// 省略号（2026-11-02 用户反馈）;列表预览由 App 侧 2 行截断。APNs 侧 relay
+// 组包自会再按横幅帽截,两头口径各自成立。取 Truncate 而非 Summarize:
+// 换行不压扁,App 端 markdown 渲染（栅栏/列表）才能出形。
+const ReplySummaryRunes = 2000
+
 // Input 是 Claude Code / Codex hook 的公共输入字段。
 //
 // 两个 Agent 的字段高度重合；这里保留 camelCase 别名以兼容不同版本。

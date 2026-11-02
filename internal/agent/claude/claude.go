@@ -40,7 +40,8 @@ func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config
 		return &agent.Event{Envelope: env, HookEvent: in.HookEventName}, nil
 	case "Stop":
 		p := agent.BasePayload(in)
-		p.ReplySummary = wire.Summarize(in.LastAssistantMessage, wire.MaxReplyRunes)
+		// 详情帽+保结构(见 agent.ReplySummaryRunes):换行不压扁,markdown 可渲染
+		p.ReplySummary = wire.Truncate(in.LastAssistantMessage, agent.ReplySummaryRunes)
 		env := agent.NewEnvelope(wire.AgentClaude, daemonID, in, wire.EventTaskComplete, p, now)
 		return &agent.Event{Envelope: env, HookEvent: in.HookEventName}, nil
 	case "SessionEnd":
