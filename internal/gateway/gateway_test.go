@@ -126,8 +126,9 @@ type reqOpts struct {
 	body   []byte
 	method string
 	path   string
-	noBody bool
-	tmux   string
+	noBody  bool
+	tmux    string
+	tmuxWin string
 }
 
 func (e *testEnv) do(t *testing.T, o reqOpts) (*http.Response, []byte) {
@@ -158,6 +159,9 @@ func (e *testEnv) do(t *testing.T, o reqOpts) (*http.Response, []byte) {
 	}
 	if o.tmux != "" {
 		req.Header.Set("X-DevPilot-Tmux-Session", o.tmux)
+	}
+	if o.tmuxWin != "" {
+		req.Header.Set("X-DevPilot-Tmux-Window", o.tmuxWin)
 	}
 	resp, err := e.http.Client().Do(req)
 	if err != nil {
@@ -405,7 +409,7 @@ func TestHostContextStamped(t *testing.T) {
 	go func() {
 		defer close(done)
 		resp, body := e.do(t, reqOpts{
-			agent: "claude", token: testToken, tmux: "main",
+			agent: "claude", token: testToken, tmux: "main", tmuxWin: "2",
 			body: fixture(t, "permission_request.json"),
 		})
 		if resp.StatusCode != http.StatusNoContent {
@@ -426,6 +430,9 @@ func TestHostContextStamped(t *testing.T) {
 	if env.Payload.TmuxSession != "main" {
 		t.Fatalf("tmux 会话 = %q", env.Payload.TmuxSession)
 	}
+	if env.Payload.TmuxWindow != "2" {
+		t.Fatalf("tmux 窗口 = %q, want 2", env.Payload.TmuxWindow)
+	}
 	if env.ExpiresAt != fixed.Add(2*time.Minute).Unix() {
 		t.Fatalf("expires_at = %d, want %d", env.ExpiresAt, fixed.Add(2*time.Minute).Unix())
 	}
@@ -443,7 +450,7 @@ func TestHostContextStamped(t *testing.T) {
 	if tool.Payload.Hostname != "eric-mbp.lan" || tool.Payload.Cwd == "" {
 		t.Fatalf("工具事件应带主机身份: %+v", tool.Payload)
 	}
-	if tool.ExpiresAt != 0 || tool.Payload.TmuxSession != "" {
+	if tool.ExpiresAt != 0 || tool.Payload.TmuxSession != "" || tool.Payload.TmuxWindow != "" {
 		t.Fatalf("工具事件不应盖 expires_at/tmux: %+v", tool)
 	}
 }

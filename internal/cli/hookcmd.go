@@ -70,8 +70,11 @@ func runHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	req.Header.Set("Authorization", "Bearer "+string(token))
 	req.Header.Set("Content-Type", "application/json")
-	if name := tmuxProbe(body, cfg); name != "" {
-		req.Header.Set("X-DevPilot-Tmux-Session", name)
+	if info := tmuxProbe(body, cfg); info.session != "" {
+		req.Header.Set("X-DevPilot-Tmux-Session", info.session)
+		if info.window != "" {
+			req.Header.Set("X-DevPilot-Tmux-Window", info.window)
+		}
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -87,29 +90,61 @@ func runHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// tmuxProbe 探测当前 tmux 会话名(经专用 header 传给 daemon,由网关盖进
-// payload,App 收件箱据此路由回会话)。只对审批候选事件探测:hook 调用
-// 频繁(每个工具用前/后各一次),无条件探测会被卡死的 tmux 服务端拖累。
-// $TMUX 由 tmux 服务端注入;非 tmux 环境为空,直接跳过。
-func tmuxProbe(body []byte, cfg *config.Config) string {
+// tmuxInfo 是一次探测取回的 tmux 定位:会话名 + 窗口号(v0.3.1)。
+type tmuxInfo struct {
+	session string
+	window  string
+}
+
+// tmuxProbe 探测当前 tmux 会话名与窗口号(经专用 header 传给 daemon,由
+// 网关盖进 payload,App 收件箱据此路由回会话/展示详情)。只对审批候选
+// 事件探测:hook 调用频繁(每个工具用前/后各一次),无条件探测会被卡死
+// 的 tmux 服务端拖累。$TMUX 由 tmux 服务端注入;非 tmux 环境为空,直接
+// 跳过。单次 display-message 同取 '#S #{window_index}'。
+func tmuxProbe(body []byte, cfg *config.Config) tmuxInfo {
 	if os.Getenv("TMUX") == "" {
-		return ""
+		return tmuxInfo{}
 	}
 	in, err := agent.ParseInput(body)
 	if err != nil {
-		return ""
+		return tmuxInfo{}
 	}
 	approvalCandidate := in.HookEventName == "PermissionRequest" ||
 		(in.HookEventName == "PreToolUse" &&
 			config.ApprovalMode(cfg.ApprovalMode) == config.ApprovalModePreToolUse)
 	if !approvalCandidate {
-		return ""
+		return tmuxInfo{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxProbeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#S").Output()
+	out, err := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#S #{window_index}").Output()
 	if err != nil {
-		return "" // 失败回落:不带 header,网关按无会话处理
+		return tmuxInfo{} // 失败回落:不带 header,网关按无会话处理
 	}
-	return strings.TrimSpace(string(out))
+	return parseTmuxInfo(strings.TrimSpace(string(out)))
+}
+
+// parseTmuxInfo 解析 display-message 输出:会话名可含空格,不能天真
+// Split——从行尾取最后一个空格分隔 token 为窗口号(全数字校验,非数字
+// 置空),其余全量保留为会话名。
+func parseTmuxInfo(line string) tmuxInfo {
+	// 自防御 trim:调用方通常已 TrimSpace,但直接喂原始输出也不出错
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return tmuxInfo{}
+	}
+	idx := strings.LastIndexByte(line, ' ')
+	if idx < 0 {
+		// 只有一段:按旧协议视作纯会话名
+		return tmuxInfo{session: line}
+	}
+	session := strings.TrimSpace(line[:idx])
+	window := strings.TrimSpace(line[idx+1:])
+	for _, r := range window {
+		if r < '0' || r > '9' {
+			window = "" // 非数字(旧 tmux/异常输出):窗口号置空,余下段保留为会话名
+			break
+		}
+	}
+	return tmuxInfo{session: session, window: window}
 }

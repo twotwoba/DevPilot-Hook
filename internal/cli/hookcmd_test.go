@@ -240,8 +240,9 @@ func fakeTmux(t *testing.T) string {
 	bin := t.TempDir()
 	counter := filepath.Join(bin, "calls")
 	script := filepath.Join(bin, "tmux")
-	// 输出带空白,顺带验证 TrimSpace;每次调用追加一行到计数文件。
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ' main '\necho x >> "+counter+"\n"), 0o755); err != nil {
+	// 输出带空白,顺带验证 TrimSpace;会话名 + 窗口号同取(v0.3.1)。
+	// 每次调用追加一行到计数文件。
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ' main 2 '\necho x >> "+counter+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -263,9 +264,10 @@ func tmuxCalls(t *testing.T, counter string) int {
 
 func TestHookTmuxHeaderInjected(t *testing.T) {
 	counter := fakeTmux(t)
-	var gotHeader string
+	var gotSession, gotWindow string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get("X-DevPilot-Tmux-Session")
+		gotSession = r.Header.Get("X-DevPilot-Tmux-Session")
+		gotWindow = r.Header.Get("X-DevPilot-Tmux-Window")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -275,11 +277,41 @@ func TestHookTmuxHeaderInjected(t *testing.T) {
 	runHook([]string{"--dir", paths.Dir, "claude"},
 		strings.NewReader(`{"session_id":"s1","hook_event_name":"PermissionRequest"}`), &stdout, &stderr)
 
-	if gotHeader != "main" {
-		t.Fatalf("tmux header = %q, want main", gotHeader)
+	if gotSession != "main" {
+		t.Fatalf("tmux session header = %q, want main", gotSession)
+	}
+	if gotWindow != "2" {
+		t.Fatalf("tmux window header = %q, want 2", gotWindow)
 	}
 	if n := tmuxCalls(t, counter); n != 1 {
 		t.Fatalf("tmux 探测次数 = %d, want 1", n)
+	}
+}
+
+// TestParseTmuxInfo 解析规则:会话名可含空格——行尾最后一个空格分隔
+// token 为窗口号(全数字校验),其余全量保留。
+func TestParseTmuxInfo(t *testing.T) {
+	cases := []struct {
+		name    string
+		line    string
+		session string
+		window  string
+	}{
+		{"普通", "main 2", "main", "2"},
+		{"会话名含空格", "my session 3", "my session", "3"},
+		{"带首尾空白", "  dev session 12  ", "dev session", "12"},
+		{"窗口非数字置空(余下段保留)", "main x", "main", ""},
+		{"无 token 视作纯会话名", "solo", "solo", ""},
+		{"空行", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseTmuxInfo(tc.line)
+			if got.session != tc.session || got.window != tc.window {
+				t.Fatalf("parseTmuxInfo(%q) = {%q %q}, want {%q %q}",
+					tc.line, got.session, got.window, tc.session, tc.window)
+			}
+		})
 	}
 }
 
@@ -300,9 +332,10 @@ func TestHookTmuxProbeOnlyForApprovalCandidates(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			counter := fakeTmux(t)
-			var header string
+			var session, window string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				header = r.Header.Get("X-DevPilot-Tmux-Session")
+				session = r.Header.Get("X-DevPilot-Tmux-Session")
+				window = r.Header.Get("X-DevPilot-Tmux-Window")
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			defer srv.Close()
@@ -321,12 +354,15 @@ func TestHookTmuxProbeOnlyForApprovalCandidates(t *testing.T) {
 			runHook([]string{"--dir", paths.Dir, "claude"}, strings.NewReader(body), &stdout, &stderr)
 
 			if tc.probe {
-				if header != "main" {
-					t.Fatalf("header = %q, want main", header)
+				if session != "main" {
+					t.Fatalf("session header = %q, want main", session)
+				}
+				if window != "2" {
+					t.Fatalf("window header = %q, want 2", window)
 				}
 			} else {
-				if header != "" {
-					t.Fatalf("不应带 tmux header,得到 %q", header)
+				if session != "" || window != "" {
+					t.Fatalf("不应带 tmux header,得到 session=%q window=%q", session, window)
 				}
 				if n := tmuxCalls(t, counter); n != 0 {
 					t.Fatalf("不应探测 tmux,实际 %d 次", n)

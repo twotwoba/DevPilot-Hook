@@ -300,6 +300,11 @@ func (s *Server) stampHostContext(r *http.Request, env *wire.Envelope, in agent.
 	if ts := strings.TrimSpace(r.Header.Get("X-DevPilot-Tmux-Session")); ts != "" {
 		env.Payload.TmuxSession = ts
 	}
+	// tmux 窗口号(v0.3.1):与 session 同源探测,App 详情抽屉展示;仅
+	// 审批候选事件有 header,工具事件天然不带
+	if w := strings.TrimSpace(r.Header.Get("X-DevPilot-Tmux-Window")); w != "" {
+		env.Payload.TmuxWindow = w
+	}
 	if env.Type == wire.EventApprovalRequired {
 		env.ExpiresAt = s.p.Now().Unix() + int64(s.p.ApprovalTimeout/time.Second)
 	}
