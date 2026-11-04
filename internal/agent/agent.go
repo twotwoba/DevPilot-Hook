@@ -71,10 +71,13 @@ type Event struct {
 // Adapter 隔离 Agent 之间的差异。
 type Adapter interface {
 	Name() wire.Agent
-	// Normalize 返回 nil 表示该 hook 事件不需要上报。
-	Normalize(in Input, daemonID string, now int64, mode config.ApprovalMode) (*Event, error)
+	// Normalize 返回 nil 表示该 hook 事件不需要上报。answerQuestions 表示
+	// 允许把 PreToolUse 的 AskUserQuestion 拦成审批（Claude Code 专用；
+	// 其他适配器可忽略）。
+	Normalize(in Input, daemonID string, now int64, mode config.ApprovalMode, answerQuestions bool) (*Event, error)
 	// RenderDecision 生成 hook stdout；只应在拿到 allow/deny 时调用。
-	RenderDecision(hookEvent string, d wire.DecisionKind) ([]byte, error)
+	// choice 是选项型审批所选的候选标签（无则空串）。
+	RenderDecision(hookEvent string, d wire.DecisionKind, choice string) ([]byte, error)
 }
 
 // BasePayload 生成所有事件共有的摘要字段。
@@ -98,6 +101,9 @@ func WithTool(p wire.Payload, in Input) wire.Payload {
 	p.ToolName = wire.Truncate(in.ToolName, 64)
 	p.CommandSummary = wire.SummarizeToolInput(in.ToolInput)
 	p.InputDigest = wire.InputDigest(in.ToolInput)
+	// 选项型审批（AskUserQuestion 恰好一问）的候选标签：App 审批卡渲染
+	// 选项钮。非该形态 ExtractOptions 返回 nil,不设键。
+	p.Options = wire.ExtractOptions(in.ToolInput)
 	return p
 }
 

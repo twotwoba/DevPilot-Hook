@@ -284,7 +284,7 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 }
 
 func (c *Client) handleDecision(ctx context.Context, conn *websocket.Conn, d *wire.Decision) {
-	res := c.cfg.Registry.Decide(d.ApprovalID, d.Decision, c.cfg.Now())
+	res := c.cfg.Registry.Decide(d.ApprovalID, d.Decision, d.Choice, c.cfg.Now())
 	ack := wire.Ack{
 		V: wire.Version, Kind: wire.KindAck, MsgID: newMsgID(),
 		RefMsgID: d.MsgID, ApprovalID: d.ApprovalID,

@@ -20,13 +20,20 @@ func (Adapter) Name() wire.Agent { return wire.AgentClaude }
 // 默认用 PermissionRequest 作为审批主通道：它只在 Claude Code 真的要弹
 // 原生权限询问时触发。PreToolUse 仅用于 tool_running 遥测；旧版本可用
 // pre-tool-use 模式让 PreToolUse 直接阻塞审批。
-func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config.ApprovalMode) (*agent.Event, error) {
+//
+// answerQuestions 开启时，PreToolUse 的 AskUserQuestion 升格为审批：
+// AskUserQuestion 不触发 PermissionRequest（Claude Code 侧它不是权限
+// 询问），原生链路只能在终端等答案；拦下来手机卡片直接点选项作答。
+// 审批 ID 与 PermissionRequest 通道同源派生（session+tool+use+input），
+// 若某版本 Claude Code 两通道齐发也只会登记一条。
+func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config.ApprovalMode, answerQuestions bool) (*agent.Event, error) {
 	switch in.HookEventName {
 	case "SessionStart":
 		env := agent.NewEnvelope(wire.AgentClaude, daemonID, in, wire.EventSessionStarted, agent.BasePayload(in), now)
 		return &agent.Event{Envelope: env, HookEvent: in.HookEventName}, nil
 	case "PreToolUse":
-		if mode == config.ApprovalModePreToolUse {
+		if mode == config.ApprovalModePreToolUse ||
+			(answerQuestions && in.ToolName == "AskUserQuestion") {
 			env := agent.NewApprovalEnvelope(wire.AgentClaude, daemonID, in, now)
 			return &agent.Event{Envelope: env, HookEvent: in.HookEventName, NeedsApproval: true}, nil
 		}
@@ -54,12 +61,20 @@ func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config
 }
 
 // RenderDecision 生成 Claude Code 期望的 hook 输出。
-func (Adapter) RenderDecision(hookEvent string, d wire.DecisionKind) ([]byte, error) {
+//
+// choice 非空 = 选项作答：deny + 理由携带所选标签喂回模型——Claude Code
+// 对 PreToolUse deny 的 reason 就是模型的输入，模型把它当用户的最终选择
+// 继续推进，不再重复追问。这是文档化行为，不赌 ask 输出 schema。
+func (Adapter) RenderDecision(hookEvent string, d wire.DecisionKind, choice string) ([]byte, error) {
 	behavior := "allow"
 	message := "Approved from phone"
 	if d == wire.DecisionDeny {
 		behavior = "deny"
 		message = "Denied from phone"
+		if choice != "" {
+			message = "The user has already answered this question from their phone. " +
+				"Their answer is: \"" + choice + "\". Treat it as the user's final choice and proceed accordingly without asking again."
+		}
 	}
 
 	if hookEvent == "PreToolUse" {

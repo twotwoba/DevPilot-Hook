@@ -78,8 +78,13 @@ type Config struct {
 	ApprovalTimeout   int      `json:"approval_timeout_seconds"`
 	ToolEventInterval int      `json:"tool_event_interval_seconds"`
 	ApprovalMode      string   `json:"approval_mode"`
-	Agents            []string `json:"agents"`
-	CreatedAt         int64    `json:"created_at"`
+	// DisableAnswerQuestions 关闭 AskUserQuestion 的手机作答拦截。缺省
+	// false = 拦截开启（选项作答默认可用）；纯粹守在终端前的用户可显式
+	// 置 true 回到「终端原生问答」行为。反向布尔：bool 零值语义天然兼容
+	// 旧配置文件（缺键 = 开）。
+	DisableAnswerQuestions bool     `json:"disable_answer_questions,omitempty"`
+	Agents                 []string `json:"agents"`
+	CreatedAt              int64    `json:"created_at"`
 }
 
 // Default 返回一份可直接使用的默认配置。

@@ -31,19 +31,26 @@ type Approval struct {
 	// 以下字段由 Registry.mu 保护。
 	status   Status
 	decision wire.DecisionKind
-	done     chan struct{}
+	// choice 是选项型审批所选的候选标签（可空）；allow/deny 语义之外的
+	// 附加信息，RenderDecision 据此生成喂回 agent 的理由文本。
+	choice string
+	done   chan struct{}
 }
 
 // Result 是 Wait 的返回值。
 type Result struct {
 	Status   Status
 	Decision wire.DecisionKind
+	// Choice 随决策带回（选项型审批所选标签，无则空串）。
+	Choice string
 }
 
 // DecideResult 是 Decide 的返回值。
 type DecideResult struct {
 	Status   Status
 	Decision wire.DecisionKind
+	// Choice 原样带回本次提交的选项标签。
+	Choice string
 	// Accepted 表示本次调用真正改变了状态；false 表示重复决策或已过期。
 	Accepted bool
 }
@@ -91,7 +98,7 @@ func (r *Registry) Wait(ctx context.Context, id string) Result {
 		return Result{Status: StatusUnknown}
 	}
 	if a.status != StatusPending {
-		res := Result{Status: a.status, Decision: a.decision}
+		res := Result{Status: a.status, Decision: a.decision, Choice: a.choice}
 		r.mu.Unlock()
 		return res
 	}
@@ -103,20 +110,21 @@ func (r *Registry) Wait(ctx context.Context, id string) Result {
 	select {
 	case <-a.done:
 		r.mu.Lock()
-		res := Result{Status: a.status, Decision: a.decision}
+		res := Result{Status: a.status, Decision: a.decision, Choice: a.choice}
 		r.mu.Unlock()
 		return res
 	case <-timer.C:
-		r.finish(a, StatusExpired, "")
+		r.finish(a, StatusExpired, "", "")
 		return Result{Status: StatusExpired}
 	case <-ctx.Done():
-		r.finish(a, StatusCancelled, "")
+		r.finish(a, StatusCancelled, "", "")
 		return Result{Status: StatusCancelled}
 	}
 }
 
-// Decide 提交手机决策；first-wins。
-func (r *Registry) Decide(id string, d wire.DecisionKind, now time.Time) DecideResult {
+// Decide 提交手机决策；first-wins。choice 是选项型审批的所选标签（可空），
+// 与决策绑定后经 Result/DecideResult 带回给渲染层。
+func (r *Registry) Decide(id string, d wire.DecisionKind, choice string, now time.Time) DecideResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	a, ok := r.items[id]
@@ -124,18 +132,18 @@ func (r *Registry) Decide(id string, d wire.DecisionKind, now time.Time) DecideR
 		return DecideResult{Status: StatusUnknown}
 	}
 	if a.status != StatusPending {
-		return DecideResult{Status: a.status, Decision: a.decision}
+		return DecideResult{Status: a.status, Decision: a.decision, Choice: a.choice}
 	}
 	if now.After(a.Deadline) {
-		r.finishLocked(a, StatusExpired, "")
+		r.finishLocked(a, StatusExpired, "", "")
 		return DecideResult{Status: StatusExpired}
 	}
 	status := StatusApproved
 	if d == wire.DecisionDeny {
 		status = StatusDenied
 	}
-	r.finishLocked(a, status, d)
-	return DecideResult{Status: status, Decision: d, Accepted: true}
+	r.finishLocked(a, status, d, choice)
+	return DecideResult{Status: status, Decision: d, Choice: choice, Accepted: true}
 }
 
 // Expire 清理所有已超时的 pending 审批，返回本次过期的列表。
@@ -145,7 +153,7 @@ func (r *Registry) Expire(now time.Time) []*Approval {
 	var out []*Approval
 	for _, a := range r.items {
 		if a.status == StatusPending && now.After(a.Deadline) {
-			r.finishLocked(a, StatusExpired, "")
+			r.finishLocked(a, StatusExpired, "", "")
 			out = append(out, a)
 		}
 	}
@@ -157,7 +165,7 @@ func (r *Registry) Cancel(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if a, ok := r.items[id]; ok && a.status == StatusPending {
-		r.finishLocked(a, StatusCancelled, "")
+		r.finishLocked(a, StatusCancelled, "", "")
 	}
 }
 
@@ -203,18 +211,19 @@ func (r *Registry) Cleanup(now time.Time, keep time.Duration) int {
 	return removed
 }
 
-func (r *Registry) finish(a *Approval, status Status, d wire.DecisionKind) {
+func (r *Registry) finish(a *Approval, status Status, d wire.DecisionKind, choice string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.finishLocked(a, status, d)
+	r.finishLocked(a, status, d, choice)
 }
 
 // finishLocked 要求调用方已持有 r.mu。
-func (r *Registry) finishLocked(a *Approval, status Status, d wire.DecisionKind) {
+func (r *Registry) finishLocked(a *Approval, status Status, d wire.DecisionKind, choice string) {
 	if a.status != StatusPending {
 		return
 	}
 	a.status = status
 	a.decision = d
+	a.choice = choice
 	close(a.done)
 }

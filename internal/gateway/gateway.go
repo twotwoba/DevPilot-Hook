@@ -40,7 +40,11 @@ type Params struct {
 	ApprovalTimeout   time.Duration
 	ToolEventInterval time.Duration
 	ApprovalMode      config.ApprovalMode
-	Adapters          map[wire.Agent]agent.Adapter
+	// DisableAnswerQuestions 关闭 AskUserQuestion 的手机作答拦截（默认开）：
+	// 开着时 PreToolUse 的 AskUserQuestion 升格为审批事件，手机卡片上直接
+	// 点选项作答（deny + 理由携带答案喂回 agent）。
+	DisableAnswerQuestions bool
+	Adapters               map[wire.Agent]agent.Adapter
 	Registry          *event.Registry
 	WAL               *queue.WAL
 	Publisher         Publisher
@@ -222,7 +226,8 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.p.Now()
-	ev, err := adapter.Normalize(in, s.p.DaemonID, now.Unix(), s.p.ApprovalMode)
+	// 选项作答默认开（主路径特性），配置侧 disable_answer_questions 显式关闭。
+	ev, err := adapter.Normalize(in, s.p.DaemonID, now.Unix(), s.p.ApprovalMode, !s.p.DisableAnswerQuestions)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -268,7 +273,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	switch result.Status {
 	case event.StatusApproved, event.StatusDenied:
 		// approved/denied 不发 close:决策经由 relay,relay 落地时已合成广播。
-		out, err := adapter.RenderDecision(ev.HookEvent, result.Decision)
+		out, err := adapter.RenderDecision(ev.HookEvent, result.Decision, result.Choice)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -377,7 +382,7 @@ func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	res := s.p.Registry.Decide(d.ApprovalID, d.Decision, s.p.Now())
+	res := s.p.Registry.Decide(d.ApprovalID, d.Decision, d.Choice, s.p.Now())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{

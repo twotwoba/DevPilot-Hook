@@ -17,7 +17,7 @@ func TestStopReplySummaryDetailCapKeepsNewlines(t *testing.T) {
 		Cwd:                  "/tmp/proj",
 		LastAssistantMessage: "结论如下：\n- 第一点\n- 第二点",
 	}
-	ev, err := Adapter{}.Normalize(in, "dv_1", 1_000, config.ApprovalModePermissionRequest)
+	ev, err := Adapter{}.Normalize(in, "dv_1", 1_000, config.ApprovalModePermissionRequest, false)
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestStopReplySummaryDetailCapKeepsNewlines(t *testing.T) {
 		SessionID:            "s2",
 		HookEventName:        "Stop",
 		LastAssistantMessage: long,
-	}, "dv_1", 1_000, config.ApprovalModePermissionRequest)
+	}, "dv_1", 1_000, config.ApprovalModePermissionRequest, false)
 	if err != nil {
 		t.Fatalf("Normalize(long): %v", err)
 	}

@@ -19,7 +19,9 @@ type Adapter struct{}
 func (Adapter) Name() wire.Agent { return wire.AgentCodex }
 
 // Normalize 把 Codex hook 事件映射为 wire 事件。
-func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config.ApprovalMode) (*agent.Event, error) {
+// answerQuestions 是 Claude Code 专用开关（AskUserQuestion 拦截），Codex
+// 无此工具，忽略该参。
+func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config.ApprovalMode, answerQuestions bool) (*agent.Event, error) {
 	switch in.HookEventName {
 	case "SessionStart":
 		env := agent.NewEnvelope(wire.AgentCodex, daemonID, in, wire.EventSessionStarted, agent.BasePayload(in), now)
@@ -52,12 +54,18 @@ func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config
 }
 
 // RenderDecision 生成 Codex 期望的 hook 输出。
-func (Adapter) RenderDecision(hookEvent string, d wire.DecisionKind) ([]byte, error) {
+// choice：Codex 无选项卡片（AskUserQuestion 是 Claude Code 工具），
+// 防御位——choice 若随 deny 到达，理由文本带上答案原样喂回。
+func (Adapter) RenderDecision(hookEvent string, d wire.DecisionKind, choice string) ([]byte, error) {
 	decision := "allow"
 	reason := "Approved from phone"
 	if d == wire.DecisionDeny {
 		decision = "deny"
 		reason = "Denied from phone"
+		if choice != "" {
+			reason = "The user has already answered this question from their phone. " +
+				"Their answer is: \"" + choice + "\". Treat it as the user's final choice and proceed accordingly without asking again."
+		}
 	}
 	event := hookEvent
 	if event == "" || event == "PermissionRequest" {

@@ -44,7 +44,7 @@ func TestClaudeEventMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
 			in := loadInput(t, "claude", tc.file)
-			ev, err := ad.Normalize(in, "dd_test", now, config.ApprovalModePermissionRequest)
+			ev, err := ad.Normalize(in, "dd_test", now, config.ApprovalModePermissionRequest, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,11 +64,11 @@ func TestClaudeEventMapping(t *testing.T) {
 func TestClaudeApprovalIDDeterministic(t *testing.T) {
 	ad := claude.Adapter{}
 	in := loadInput(t, "claude", "permission_request.json")
-	a, err := ad.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest)
+	a, err := ad.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ad.Normalize(in, "dd_test", 2, config.ApprovalModePermissionRequest)
+	b, err := ad.Normalize(in, "dd_test", 2, config.ApprovalModePermissionRequest, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestClaudeApprovalIDDeterministic(t *testing.T) {
 func TestClaudePreToolUseFallbackMode(t *testing.T) {
 	ad := claude.Adapter{}
 	in := loadInput(t, "claude", "pre_tool_use.json")
-	ev, err := ad.Normalize(in, "dd_test", 1, config.ApprovalModePreToolUse)
+	ev, err := ad.Normalize(in, "dd_test", 1, config.ApprovalModePreToolUse, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestClaudePreToolUseFallbackMode(t *testing.T) {
 func TestClaudePayloadWhitelist(t *testing.T) {
 	ad := claude.Adapter{}
 	in := loadInput(t, "claude", "permission_request.json")
-	ev, _ := ad.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest)
+	ev, _ := ad.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest, false)
 	p := ev.Envelope.Payload
 	if p.ToolName != "Bash" || p.CommandSummary != "git push --force origin main" {
 		t.Fatalf("摘要不符: %+v", p)
@@ -125,7 +125,7 @@ func containsKey(raw []byte, key string) bool {
 func TestClaudeRenderDecision(t *testing.T) {
 	ad := claude.Adapter{}
 
-	allow, err := ad.RenderDecision("PermissionRequest", wire.DecisionAllow)
+	allow, err := ad.RenderDecision("PermissionRequest", wire.DecisionAllow, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestClaudeRenderDecision(t *testing.T) {
 		t.Fatalf("输出不符: %s", allow)
 	}
 
-	deny, _ := ad.RenderDecision("PreToolUse", wire.DecisionDeny)
+	deny, _ := ad.RenderDecision("PreToolUse", wire.DecisionDeny, "")
 	var pre struct {
 		HookSpecificOutput struct {
 			PermissionDecision string `json:"permissionDecision"`
@@ -163,7 +163,7 @@ func TestClaudeRenderDecision(t *testing.T) {
 func TestCodexNormalizeAndRender(t *testing.T) {
 	ad := codex.Adapter{}
 	in := loadInput(t, "codex", "pre_tool_use.json")
-	ev, err := ad.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest)
+	ev, err := ad.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,12 +172,12 @@ func TestCodexNormalizeAndRender(t *testing.T) {
 	}
 
 	stop := loadInput(t, "codex", "stop.json")
-	ev, err = ad.Normalize(stop, "dd_test", 1, config.ApprovalModePermissionRequest)
+	ev, err = ad.Normalize(stop, "dd_test", 1, config.ApprovalModePermissionRequest, false)
 	if err != nil || ev == nil || ev.Envelope.Type != wire.EventTaskComplete {
 		t.Fatalf("Codex Stop 映射不符: %+v %v", ev, err)
 	}
 
-	out, err := ad.RenderDecision("PermissionRequest", wire.DecisionDeny)
+	out, err := ad.RenderDecision("PermissionRequest", wire.DecisionDeny, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestCodexNormalizeAndRender(t *testing.T) {
 
 func TestUnknownHookIgnored(t *testing.T) {
 	in := agent.Input{SessionID: "s", HookEventName: "Notification"}
-	ev, err := claude.Adapter{}.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest)
+	ev, err := claude.Adapter{}.Normalize(in, "dd_test", 1, config.ApprovalModePermissionRequest, false)
 	if err != nil || ev != nil {
 		t.Fatalf("未知 hook 应忽略: %+v %v", ev, err)
 	}

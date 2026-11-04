@@ -29,7 +29,7 @@ func TestFirstDecisionWins(t *testing.T) {
 	done := make(chan Result, 1)
 	go func() { done <- r.Wait(context.Background(), "apv_1") }()
 
-	res := r.Decide("apv_1", wire.DecisionAllow, now)
+	res := r.Decide("apv_1", wire.DecisionAllow, "", now)
 	if !res.Accepted || res.Status != StatusApproved {
 		t.Fatalf("首次决策应生效: %+v", res)
 	}
@@ -38,9 +38,35 @@ func TestFirstDecisionWins(t *testing.T) {
 		t.Fatalf("Wait 结果不符: %+v", got)
 	}
 
-	dup := r.Decide("apv_1", wire.DecisionDeny, now)
+	dup := r.Decide("apv_1", wire.DecisionDeny, "", now)
 	if dup.Accepted || dup.Status != StatusApproved || dup.Decision != wire.DecisionAllow {
 		t.Fatalf("重复决策必须返回第一次结果: %+v", dup)
+	}
+}
+
+// TestDecideChoiceRoundTrip 选项作答:choice 与决策绑定,Wait 侧原样带回
+// (gateway 用它渲染喂回 agent 的理由文本)。
+func TestDecideChoiceRoundTrip(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(testEnvelope("apv_choice"), now, time.Minute)
+
+	done := make(chan Result, 1)
+	go func() { done <- r.Wait(context.Background(), "apv_choice") }()
+
+	res := r.Decide("apv_choice", wire.DecisionDeny, "Session cookie", now)
+	if !res.Accepted || res.Choice != "Session cookie" {
+		t.Fatalf("Decide 应带回 choice: %+v", res)
+	}
+	got := <-done
+	if got.Status != StatusDenied || got.Decision != wire.DecisionDeny || got.Choice != "Session cookie" {
+		t.Fatalf("Wait 结果应携带 choice: %+v", got)
+	}
+
+	// 重复决策返回首次的 choice(first-wins 全字段一致)
+	dup := r.Decide("apv_choice", wire.DecisionDeny, "JWT", now)
+	if dup.Accepted || dup.Choice != "Session cookie" {
+		t.Fatalf("重复决策必须返回首次 choice: %+v", dup)
 	}
 }
 
@@ -54,7 +80,7 @@ func TestWaitTimeoutExpires(t *testing.T) {
 		t.Fatalf("期望 expired，实际 %+v", res)
 	}
 	// 过期后的决策不能再放行。
-	late := r.Decide("apv_2", wire.DecisionAllow, now.Add(time.Second))
+	late := r.Decide("apv_2", wire.DecisionAllow, "", now.Add(time.Second))
 	if late.Accepted || late.Status != StatusExpired {
 		t.Fatalf("过期后决策必须被拒: %+v", late)
 	}
@@ -74,7 +100,7 @@ func TestWaitContextCancel(t *testing.T) {
 	if res.Status != StatusCancelled {
 		t.Fatalf("期望 cancelled，实际 %+v", res)
 	}
-	if r.Decide("apv_3", wire.DecisionAllow, time.Now()).Accepted {
+	if r.Decide("apv_3", wire.DecisionAllow, "", time.Now()).Accepted {
 		t.Fatal("取消后不能再决策")
 	}
 }
@@ -84,7 +110,7 @@ func TestUnknownApproval(t *testing.T) {
 	if res := r.Wait(context.Background(), "apv_missing"); res.Status != StatusUnknown {
 		t.Fatalf("未知审批应返回 unknown: %+v", res)
 	}
-	if res := r.Decide("apv_missing", wire.DecisionAllow, time.Now()); res.Status != StatusUnknown {
+	if res := r.Decide("apv_missing", wire.DecisionAllow, "", time.Now()); res.Status != StatusUnknown {
 		t.Fatalf("未知审批决策应返回 unknown: %+v", res)
 	}
 }
