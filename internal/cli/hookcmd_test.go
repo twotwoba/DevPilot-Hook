@@ -283,8 +283,11 @@ func TestHookTmuxHeaderInjected(t *testing.T) {
 	if gotWindow != "2" {
 		t.Fatalf("tmux window header = %q, want 2", gotWindow)
 	}
-	if n := tmuxCalls(t, counter); n != 1 {
-		t.Fatalf("tmux 探测次数 = %d, want 1", n)
+	// 探测次数 1~2:有控制 tty 祖先时先 list-panes 锚定,桩无 tab 输出
+	// 不命中再回落 display-message;无 tty 祖先时只走 display-message。
+	// 合同是「有限次数」,两环境都不得越界。
+	if n := tmuxCalls(t, counter); n < 1 || n > 2 {
+		t.Fatalf("tmux 探测次数 = %d, want 1~2", n)
 	}
 }
 
@@ -315,9 +318,83 @@ func TestParseTmuxInfo(t *testing.T) {
 	}
 }
 
-// TestHookTmuxProbeOnlyForApprovalCandidates 非审批事件不探测:
-// 高频工具 hook 不能被 tmux 服务端卡死拖累。
-func TestHookTmuxProbeOnlyForApprovalCandidates(t *testing.T) {
+// TestParsePaneList list-panes -a 输出按 pane tty 精确匹配:
+// 会话名可含空格、行尾 token 为窗口号; tty 归一化(/dev/ 前缀、"?"/"??" 不算)。
+func TestParsePaneList(t *testing.T) {
+	cases := []struct {
+		name    string
+		out     string
+		tty     string
+		session string
+		window  string
+	}{
+		{"命中窗口0", "/dev/ttys019\tDevPilot\t0\ndev/null\n", "ttys019", "DevPilot", "0"},
+		{"多行选对 pane", "/dev/ttys001\t0\t0\n/dev/ttys019\tmy work\t3\n/dev/ttys010\tDevPilot\t1\n", "ttys019", "my work", "3"},
+		{"无 /dev 前缀也命中", "ttys011\tbug\t2\n", "ttys011", "bug", "2"},
+		{"tty 不匹配落空", "/dev/ttys001\tmain\t5\n", "ttys999", "", ""},
+		{"无 tty 行不算命中", "?\tmain\t5\n??\tmain\t6\n", "?", "", ""},
+		{"窗口非数字置空会话保留", "/dev/ttys019\tmain\tx\n", "ttys019", "main", ""},
+		{"缺字段行跳过", "onlytty\n", "onlytty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parsePaneList(tc.out, tc.tty)
+			if got.session != tc.session || got.window != tc.window {
+				t.Fatalf("parsePaneList(tty=%q) = {%q %q}, want {%q %q}",
+					tc.tty, got.session, got.window, tc.session, tc.window)
+			}
+		})
+	}
+}
+
+// TestHookTmuxPaneTTYPreferred 有控制 tty 的环境下,窗口号取 agent pane
+// 真位置(list-panes 精确锚定),而非 display-message 回落的「会话当前
+// 激活窗」。桩让两条路径输出不同窗口号,断言取的是 pane 那份。
+func TestHookTmuxPaneTTYPreferred(t *testing.T) {
+	tty := ancestorTTY()
+	if tty == "" {
+		t.Skip("测试进程自身无控制 tty(如 CI),tty 精确锚定无从验证")
+	}
+
+	bin := t.TempDir()
+	script := filepath.Join(bin, "tmux")
+	// list-panes:真 pane(ttys 命中本测试 tty,窗口 2)+ 两行 decoy;
+	// display-message:激活窗回落,故意输出不同窗口号 9。
+	stub := "#!/bin/sh\ncase \"$*\" in\n" +
+		"*list-panes*)" +
+		"printf '/dev/ttys001\\t0\\t0\\n/dev/" + tty + "\\tmain\\t2\\n/dev/ttys010\\tmain\\t9\\n';;" +
+		"*)echo ' main 9 ';;\nesac\n"
+	if err := os.WriteFile(script, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX", "/tmp/tmux-501/default,123,0")
+
+	var gotSession, gotWindow string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get("X-DevPilot-Tmux-Session")
+		gotWindow = r.Header.Get("X-DevPilot-Tmux-Window")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	paths, _ := newTestPaths(t, portOf(t, srv.URL))
+	var stdout, stderr bytes.Buffer
+	runHook([]string{"--dir", paths.Dir, "claude"},
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`), &stdout, &stderr)
+
+	if gotSession != "main" {
+		t.Fatalf("tmux session header = %q, want main", gotSession)
+	}
+	if gotWindow != "2" {
+		t.Fatalf("tmux window header = %q, want 2(pane 真位置,非激活窗 9)", gotWindow)
+	}
+}
+
+// TestHookTmuxProbeEventWhitelist 探测名单外的事件不探测:
+// 高频工具 hook 不能被 tmux 服务端卡死拖累;Stop(回合结束 relay)
+// 低频且收件箱路由需要,在名单内。
+func TestHookTmuxProbeEventWhitelist(t *testing.T) {
 	cases := []struct {
 		name      string
 		eventName string
@@ -325,6 +402,7 @@ func TestHookTmuxProbeOnlyForApprovalCandidates(t *testing.T) {
 		probe     bool
 	}{
 		{"permission_request 默认模式", "PermissionRequest", "", true},
+		{"stop 回合结束 relay", "Stop", "", true},
 		{"pre_tool_use 审批模式", "PreToolUse", string(config.ApprovalModePreToolUse), true},
 		{"post_tool_use 不探测", "PostToolUse", "", false},
 		{"pre_tool_use 非审批模式不探测", "PreToolUse", "", false},

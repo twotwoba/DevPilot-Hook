@@ -286,7 +286,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 
 // stampHostContext 把主机身份与会话上下文盖进事件 payload:
 // hostname/host_ip/user/cwd 供 App 收件箱路由(匹配 HostRecord → 直进会话);
-// tmux 会话名来自 hook 子进程的专用 header(仅审批候选事件探测);
+// tmux 会话名来自 hook 子进程的专用 header(审批候选与 Stop 事件探测);
 // approval_required 额外盖 expires_at——等待窗终点,relay pending TTL、
 // APNs 过期、LA 倒计时全链对齐这一处时间源。
 func (s *Server) stampHostContext(r *http.Request, env *wire.Envelope, in agent.Input) {
@@ -301,7 +301,7 @@ func (s *Server) stampHostContext(r *http.Request, env *wire.Envelope, in agent.
 		env.Payload.TmuxSession = ts
 	}
 	// tmux 窗口号(v0.3.1):与 session 同源探测,App 详情抽屉展示;仅
-	// 审批候选事件有 header,工具事件天然不带
+	// 探测名单事件有 header,工具遥测事件天然不带
 	if w := strings.TrimSpace(r.Header.Get("X-DevPilot-Tmux-Window")); w != "" {
 		env.Payload.TmuxWindow = w
 	}
