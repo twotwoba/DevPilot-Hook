@@ -90,7 +90,3 @@ GoReleaser needs one extra secret: `HOMEBREW_TAP_TOKEN` (pushes to
 
 Releases are non-draft: the cask manifest references release assets, and
 external downloads would 404 while a release is a draft.
-
-## Documentation
-
-Design docs live in the master DevPilot repo (`Docs/`). This repo keeps its internal progress log (Chinese) at [Docs/进度状态.md](Docs/进度状态.md).
