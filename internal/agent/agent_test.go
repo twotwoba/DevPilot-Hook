@@ -125,7 +125,7 @@ func containsKey(raw []byte, key string) bool {
 func TestClaudeRenderDecision(t *testing.T) {
 	ad := claude.Adapter{}
 
-	allow, err := ad.RenderDecision("PermissionRequest", wire.DecisionAllow, "")
+	allow, err := ad.RenderDecision("PermissionRequest", wire.DecisionAllow, "", "ExitPlanMode", json.RawMessage(`{"plan":"# Plan"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestClaudeRenderDecision(t *testing.T) {
 		t.Fatalf("输出不符: %s", allow)
 	}
 
-	deny, _ := ad.RenderDecision("PreToolUse", wire.DecisionDeny, "")
+	deny, _ := ad.RenderDecision("PreToolUse", wire.DecisionDeny, "", "Bash", json.RawMessage(`{"command":"ls"}`))
 	var pre struct {
 		HookSpecificOutput struct {
 			PermissionDecision string `json:"permissionDecision"`
@@ -177,7 +177,7 @@ func TestCodexNormalizeAndRender(t *testing.T) {
 		t.Fatalf("Codex Stop 映射不符: %+v %v", ev, err)
 	}
 
-	out, err := ad.RenderDecision("PermissionRequest", wire.DecisionDeny, "")
+	out, err := ad.RenderDecision("PermissionRequest", wire.DecisionDeny, "", "Bash", json.RawMessage(`{"command":"ls"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

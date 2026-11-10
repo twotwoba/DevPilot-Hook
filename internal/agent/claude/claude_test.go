@@ -104,28 +104,93 @@ func TestAskUserQuestionInterception(t *testing.T) {
 	}
 }
 
-// TestRenderDecisionChoice 选项作答的回喂文本:deny+choice 的 reason 就是
-// 模型的输入,答案必须原样在文本里;无 choice 的 deny 维持原话。
+// TestRenderDecisionChoice 选项作答:单问 → allow + updatedInput.answers,
+// 以问题文本为键;解析不出单问时回落 deny+理由原样喂回标签。
 func TestRenderDecisionChoice(t *testing.T) {
-	out, err := Adapter{}.RenderDecision("PreToolUse", wire.DecisionDeny, "Session cookie")
+	askInput := json.RawMessage(`{"questions":[{"question":"Which database?","header":"DB","options":[{"label":"Postgres"},{"label":"SQLite"}]}]}`)
+	out, err := Adapter{}.RenderDecision("PreToolUse", wire.DecisionDeny, "Postgres", "AskUserQuestion", askInput)
 	if err != nil {
 		t.Fatalf("RenderDecision: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, `"permissionDecision":"deny"`) {
-		t.Fatalf("选项作答必须是 deny(文档化行为),得 %s", s)
+	var got struct {
+		HookSpecificOutput struct {
+			PermissionDecision string         `json:"permissionDecision"`
+			UpdatedInput       map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
 	}
-	if !strings.Contains(s, "Session cookie") {
-		t.Fatalf("reason 必须携带所选标签,得 %s", s)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("单问作答必须是 allow,得 %s", out)
+	}
+	if _, ok := got.HookSpecificOutput.UpdatedInput["questions"]; !ok {
+		t.Fatalf("updatedInput 必须保留原 questions,得 %s", out)
+	}
+	answers, _ := got.HookSpecificOutput.UpdatedInput["answers"].(map[string]any)
+	if answers["Which database?"] != "Postgres" {
+		t.Fatalf("answers 应以问题文本为键,得 %s", out)
 	}
 
-	// 无 choice 的 deny 维持原话;allow 不受 choice 影响
-	plain, _ := Adapter{}.RenderDecision("PreToolUse", wire.DecisionDeny, "")
+	// 解析不出单问(多问)→ 回落 deny+理由,标签仍喂回模型。
+	multi := json.RawMessage(`{"questions":[{"question":"A?"},{"question":"B?"}]}`)
+	fallback, _ := Adapter{}.RenderDecision("PreToolUse", wire.DecisionDeny, "X", "AskUserQuestion", multi)
+	if !strings.Contains(string(fallback), `"permissionDecision":"deny"`) ||
+		!strings.Contains(string(fallback), `\"X\"`) {
+		t.Fatalf("多问应回落 deny 并携带标签,得 %s", fallback)
+	}
+
+	// 无 choice 的 deny 维持原话。
+	plain, _ := Adapter{}.RenderDecision("PreToolUse", wire.DecisionDeny, "", "Bash", json.RawMessage(`{"command":"rm -rf build"}`))
 	if !strings.Contains(string(plain), "Denied from phone") {
 		t.Fatalf("无 choice deny 应维持原话,得 %s", plain)
 	}
-	allow, _ := Adapter{}.RenderDecision("PermissionRequest", wire.DecisionAllow, "")
-	if !strings.Contains(string(allow), `"behavior":"allow"`) {
-		t.Fatalf("allow 输出形状不变,得 %s", allow)
+}
+
+// TestRenderPermissionRequestUpdatedInput ExitPlanMode 的 allow 必须回显
+// updatedInput(原始 tool_input),否则 Claude Code 忽略决策继续原生询问;
+// allow 不带 message。
+func TestRenderPermissionRequestUpdatedInput(t *testing.T) {
+	plan := json.RawMessage(`{"plan":"# Plan\n- step one"}`)
+	out, err := Adapter{}.RenderDecision("PermissionRequest", wire.DecisionAllow, "", "ExitPlanMode", plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		HookSpecificOutput struct {
+			Decision map[string]any `json:"decision"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	d := got.HookSpecificOutput.Decision
+	if d["behavior"] != "allow" {
+		t.Fatalf("behavior = %v, 得 %s", d["behavior"], out)
+	}
+	ui, ok := d["updatedInput"].(map[string]any)
+	if !ok || ui["plan"] != "# Plan\n- step one" {
+		t.Fatalf("updatedInput 必须回显原 tool_input,得 %s", out)
+	}
+	if _, exists := d["message"]; exists {
+		t.Fatalf("allow 不应带 message,得 %s", out)
+	}
+
+	// deny 维持 message,不带 updatedInput。
+	deny, _ := Adapter{}.RenderDecision("PermissionRequest", wire.DecisionDeny, "", "Bash", json.RawMessage(`{"command":"ls"}`))
+	var gotDeny struct {
+		HookSpecificOutput struct {
+			Decision map[string]any `json:"decision"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(deny, &gotDeny); err != nil {
+		t.Fatal(err)
+	}
+	dd := gotDeny.HookSpecificOutput.Decision
+	if dd["behavior"] != "deny" || dd["message"] != "Denied from phone" {
+		t.Fatalf("deny 输出不符: %s", deny)
+	}
+	if _, exists := dd["updatedInput"]; exists {
+		t.Fatalf("deny 不应带 updatedInput,得 %s", deny)
 	}
 }

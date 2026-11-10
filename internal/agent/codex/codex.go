@@ -56,7 +56,9 @@ func (Adapter) Normalize(in agent.Input, daemonID string, now int64, mode config
 // RenderDecision 生成 Codex 期望的 hook 输出。
 // choice：Codex 无选项卡片（AskUserQuestion 是 Claude Code 工具），
 // 防御位——choice 若随 deny 到达，理由文本带上答案原样喂回。
-func (Adapter) RenderDecision(hookEvent string, d wire.DecisionKind, choice string) ([]byte, error) {
+// toolName / toolInput 只用于对齐接口：Codex 对未知字段 fail closed，
+// 绝不发送 updatedInput / updatedPermissions。
+func (Adapter) RenderDecision(hookEvent string, d wire.DecisionKind, choice, _ string, _ json.RawMessage) ([]byte, error) {
 	decision := "allow"
 	reason := "Approved from phone"
 	if d == wire.DecisionDeny {

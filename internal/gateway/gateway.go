@@ -273,7 +273,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	switch result.Status {
 	case event.StatusApproved, event.StatusDenied:
 		// approved/denied 不发 close:决策经由 relay,relay 落地时已合成广播。
-		out, err := adapter.RenderDecision(ev.HookEvent, result.Decision, result.Choice)
+		out, err := adapter.RenderDecision(ev.HookEvent, result.Decision, result.Choice, in.ToolName, in.ToolInput)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

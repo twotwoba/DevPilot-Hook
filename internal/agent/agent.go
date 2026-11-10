@@ -76,8 +76,10 @@ type Adapter interface {
 	// 其他适配器可忽略）。
 	Normalize(in Input, daemonID string, now int64, mode config.ApprovalMode, answerQuestions bool) (*Event, error)
 	// RenderDecision 生成 hook stdout；只应在拿到 allow/deny 时调用。
-	// choice 是选项型审批所选的候选标签（无则空串）。
-	RenderDecision(hookEvent string, d wire.DecisionKind, choice string) ([]byte, error)
+	// choice 是选项型审批所选的候选标签（无则空串）。toolName / toolInput
+	// 是原 hook 的工具名与完整入参：PermissionRequest 的 allow 必须回显
+	// updatedInput 才生效，AskUserQuestion 作答也要靠它构造 answers。
+	RenderDecision(hookEvent string, d wire.DecisionKind, choice, toolName string, toolInput json.RawMessage) ([]byte, error)
 }
 
 // BasePayload 生成所有事件共有的摘要字段。
