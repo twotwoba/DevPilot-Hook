@@ -24,6 +24,8 @@ Approval flows back: iPhone Allow/Deny → relay → daemon (this repo) → hook
 
 Design rules: a timeout anywhere in the approval chain falls back to the terminal's native prompt (worst case you are asked twice; it never approves on its own); the cloud channel only carries summary fields you could already see in the notification; benchmarked against moshi-hook.
 
+Question cards are the one exception: Claude Code's `AskUserQuestion` is not a permission prompt, so the daemon **notifies without blocking** — the hook returns immediately, the native question shows up in the terminal, and the phone card is only a heads-up with an "Answer at Terminal" jump into that agent session. The card closes itself once the question is answered (`PostToolUse` → `approval_closed(cancelled)`); no decision ever travels back for questions.
+
 ## Install
 
 macOS and Linux only (same scope as moshi-hook; no Windows).

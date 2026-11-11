@@ -64,17 +64,18 @@ func askIn() agent.Input {
 	}
 }
 
-// TestAskUserQuestionInterception 选项作答拦截:AskUserQuestion 不触发
-// PermissionRequest,PreToolUse 是唯一入口;开关开→审批+Options 随卡,
+// TestAskUserQuestionInterception 问题卡片:AskUserQuestion 不触发
+// PermissionRequest,PreToolUse 是唯一入口;开关开→只通知不阻塞的审批事件
+// （NeedsApproval=false，hook 立即放行让原生问题框回终端）+ Options 随卡；
 // 开关关→tool_running 遥测(行为与旧版完全一致)。
 func TestAskUserQuestionInterception(t *testing.T) {
-	// 开:升格审批,payload 带选项标签
+	// 开:审批事件,payload 带选项标签,但**不阻塞**
 	ev, err := Adapter{}.Normalize(askIn(), "dv_1", 1_000, config.ApprovalModePermissionRequest, true)
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
-	if !ev.NeedsApproval || ev.Envelope.Type != "approval_required" {
-		t.Fatalf("answerQuestions=true 应升格审批,得 type=%q needsApproval=%v", ev.Envelope.Type, ev.NeedsApproval)
+	if ev.NeedsApproval || ev.Envelope.Type != "approval_required" {
+		t.Fatalf("answerQuestions=true 应发只通知不阻塞的审批事件,得 type=%q needsApproval=%v", ev.Envelope.Type, ev.NeedsApproval)
 	}
 	want := []string{"JWT", "Session cookie"}
 	if !reflect.DeepEqual(ev.Envelope.Payload.Options, want) {
@@ -101,6 +102,46 @@ func TestAskUserQuestionInterception(t *testing.T) {
 	}
 	if ev3.NeedsApproval || ev3.Envelope.Type != "tool_running" {
 		t.Fatalf("普通工具不应被拦截,得 type=%q", ev3.Envelope.Type)
+	}
+}
+
+// TestAskUserQuestionAnsweredClosesCard 终端答完后收卡:PostToolUse 用同一
+// tool_use_id + tool_input 重算 approval_id，发 cancelled close（App 侧
+// 据此盖 Answered at terminal），不依赖 daemon 内存关联表。
+func TestAskUserQuestionAnsweredClosesCard(t *testing.T) {
+	pre := askIn()
+	ev, err := Adapter{}.Normalize(pre, "dv_1", 1_000, config.ApprovalModePermissionRequest, true)
+	if err != nil || ev == nil {
+		t.Fatalf("Normalize(PreToolUse): %v", err)
+	}
+	post := pre
+	post.HookEventName = "PostToolUse"
+	closeEv, err := Adapter{}.Normalize(post, "dv_1", 1_100, config.ApprovalModePermissionRequest, true)
+	if err != nil || closeEv == nil {
+		t.Fatalf("Normalize(PostToolUse): %v", err)
+	}
+	if closeEv.Envelope.Type != wire.EventApprovalClosed {
+		t.Fatalf("答完应收卡,得 type=%q", closeEv.Envelope.Type)
+	}
+	if closeEv.Envelope.ApprovalID != ev.Envelope.ApprovalID {
+		t.Fatalf("approval_id 必须与提问事件一致: %q vs %q",
+			closeEv.Envelope.ApprovalID, ev.Envelope.ApprovalID)
+	}
+	if closeEv.Envelope.Payload.StatusText != wire.CloseReasonCancelled {
+		t.Fatalf("收场原因应为 cancelled(终端已答),得 %q", closeEv.Envelope.Payload.StatusText)
+	}
+	if wantEventID := "close-" + ev.Envelope.ApprovalID; closeEv.Envelope.EventID != wantEventID {
+		t.Fatalf("event_id 应可去重: 得 %q 期望 %q", closeEv.Envelope.EventID, wantEventID)
+	}
+	if err := closeEv.Envelope.Validate(); err != nil {
+		t.Fatalf("收卡事件未通过协议校验: %v", err)
+	}
+
+	// 缺 tool_use_id 无法同源派生 → 回落 tool_finished 遥测,不瞎发 close
+	post.ToolUseID = ""
+	fallback, err := Adapter{}.Normalize(post, "dv_1", 1_100, config.ApprovalModePermissionRequest, true)
+	if err != nil || fallback == nil || fallback.Envelope.Type != wire.EventToolFinished {
+		t.Fatalf("缺 tool_use_id 应回落遥测,得 %+v err=%v", fallback, err)
 	}
 }
 

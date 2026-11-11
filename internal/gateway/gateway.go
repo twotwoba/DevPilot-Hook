@@ -40,9 +40,10 @@ type Params struct {
 	ApprovalTimeout   time.Duration
 	ToolEventInterval time.Duration
 	ApprovalMode      config.ApprovalMode
-	// DisableAnswerQuestions 关闭 AskUserQuestion 的手机作答拦截（默认开）：
-	// 开着时 PreToolUse 的 AskUserQuestion 升格为审批事件，手机卡片上直接
-	// 点选项作答（deny + 理由携带答案喂回 agent）。
+	// DisableAnswerQuestions 关闭 AskUserQuestion 的问题卡片（默认开）：
+	// 开着时 PreToolUse 的 AskUserQuestion 发「只通知不阻塞」的审批事件
+	// （NeedsApproval=false，hook 立即放行让原生问题框回终端，手机卡只做
+	// 告知 + 导航）；关掉后退化成 tool_running 遥测，不发卡。
 	DisableAnswerQuestions bool
 	Adapters               map[wire.Agent]agent.Adapter
 	Registry          *event.Registry

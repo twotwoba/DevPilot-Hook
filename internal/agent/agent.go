@@ -62,6 +62,10 @@ func ParseInput(data []byte) (Input, error) {
 }
 
 // Event 是归一化结果。
+//
+// NeedsApproval=false 而 Envelope.Type=approval_required 是合法组合：
+// AskUserQuestion 的「只通知不阻塞」——事件照发（手机卡片告知 + 导航），
+// 但不登记等待、不放行/拒绝任何决策，hook 立即退出让原生问题框回终端。
 type Event struct {
 	Envelope      wire.Envelope
 	HookEvent     string
