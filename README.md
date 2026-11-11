@@ -1,6 +1,6 @@
 # DevPilot-Hook
 
-The **hook daemon** of the DevPilot project: a long-running Go process on your dev machine that feeds Claude Code / Codex hook events (including approval requests) into the cloud push pipeline and routes approval decisions back to the agent — the loop stays closed even when the app has been killed or the phone is locked.
+The **hook daemon** of the DevPilot project: a long-running Go process on your dev machine that feeds Claude Code / Codex / OpenCode hook events (including approval requests) into the cloud push pipeline and routes approval decisions back to the agent — the loop stays closed even when the app has been killed or the phone is locked.
 
 ## How the three projects fit together
 
@@ -9,12 +9,12 @@ Two Go repos and one iOS app, one chain:
 | | DevPilot | **DevPilot-Hook (this repo)** | DevPilot-APNS |
 |---|---|---|---|
 | What it is | iOS app (Swift/SwiftUI) | **Go daemon on the dev machine** | Go relay on a cloud VPS |
-| Responsibility | Terminal/SSH, inbox UI, approval panel, Live Activity, APNs token registration | Hook adapters (Claude Code / Codex), local gateway on 127.0.0.1:24543, event aggregation & rate limiting, offline buffering | WSS ingest, pairing routing table, APNs push, Live Activity remote-update forwarding |
+| Responsibility | Terminal/SSH, inbox UI, approval panel, Live Activity, APNs token registration | Hook adapters (Claude Code / Codex / OpenCode), local gateway on 127.0.0.1:24543, event aggregation & rate limiting, offline buffering | WSS ingest, pairing routing table, APNs push, Live Activity remote-update forwarding |
 | Role in the chain | WSS client (app side): receives pushes, sends approval decisions upstream | WSS client (daemon side): sends events upstream, receives approval decisions | Hub: auth, routing, APNs |
 | Code boundary | App-side integration (RelayChannel model, etc.) | The daemon itself; `pkg/wire` imported from DevPilot-APNS via go.mod | The whole relay + the **`pkg/wire` protocol type library (single source of truth for the wire protocol across all three ends)** |
 
 ```
-Claude Code/Codex hooks
+Claude Code / Codex / OpenCode events
   → DevPilot-Hook daemon (this repo, local gateway 127.0.0.1:24543)
   → DevPilot-APNS relay (VPS: auth → routing table → channel selection)
   → Apple APNs (HTTP/2) ── or ── direct push over the app's WSS connection
@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/twotwoba/DevPilot-Hook/main/install
 On Linux you can also grab `.deb` / `.rpm` / `.tar.gz` from Releases directly.
 
 ```bash
-devpilot-hook install            # writes Claude Code / Codex hooks (only touches its own entries)
+devpilot-hook install            # writes Claude Code / Codex hooks (add --agent opencode for the OpenCode plugin)
 devpilot-hook service install    # launchd / systemd user auto-start
 devpilot-hook pair               # defaults to the official hosted relay relay.devpilot.app; prints a QR code + pairing code in the terminal
 devpilot-hook pair --relay https://relay.example.com   # explicit relay for self-hosting (dual track)
@@ -60,6 +60,27 @@ devpilot-hook serve              # runs in the foreground; the service manager r
 The `pair` address fallback chain: `--relay` > `relay_url` in config.json > official hosted relay (`config.DefaultRelayURL`). Scan the terminal QR code with the DevPilot iOS app to pair (payload is `devpilot://pair?v=1&relay=…&code=…`), or type the pairing code manually; `--no-qr` disables the QR code. `unpair` best-effort calls the relay's revoke endpoint to cascade-delete cloud data; failure (offline / older relay) does not affect local unbinding.
 
 `uninstall` removes only its own hook entries and auto-start config; `--purge` wipes the state directory.
+
+### OpenCode
+
+OpenCode has no `settings.json`-style hook file, so the integration is a global
+plugin. `devpilot-hook install --agent claude,codex,opencode` detects the
+installed `opencode` version and writes the matching plugin (it never edits
+your own plugin files). If you are adding OpenCode to an existing install,
+list every agent you use — `--agent` replaces the recorded agent set used by
+`serve`'s self-heal:
+
+| OpenCode | Plugin path | API |
+|---|---|---|
+| 0.x | `~/.config/opencode/plugin/devpilot-hook.ts` | named export + `permission.ask` |
+| 2.x | `~/.config/opencode/plugins/devpilot-hook.ts` | default export + `permission.hook("evaluate")` |
+
+OpenCode 1.x still uses the 0.x hook API and is treated as 0.x. Only `.ts`/`.js`
+files are discovered (OpenCode ignores `.mjs`). The plugin shells out to
+`devpilot-hook hook opencode` for every event, so changing the gateway port or
+token never requires reinstalling it. Upgrading OpenCode across a major version
+is self-healed by `serve`; `doctor` warns when the plugin generation does not
+match the installed CLI.
 
 ## Development & testing
 

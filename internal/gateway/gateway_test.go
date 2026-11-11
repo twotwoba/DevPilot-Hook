@@ -17,6 +17,7 @@ import (
 	"github.com/twotwoba/DevPilot-APNS/pkg/wire"
 	"github.com/twotwoba/DevPilot-Hook/internal/agent"
 	"github.com/twotwoba/DevPilot-Hook/internal/agent/claude"
+	"github.com/twotwoba/DevPilot-Hook/internal/agent/opencode"
 	"github.com/twotwoba/DevPilot-Hook/internal/config"
 	"github.com/twotwoba/DevPilot-Hook/internal/event"
 	"github.com/twotwoba/DevPilot-Hook/internal/queue"
@@ -119,13 +120,13 @@ func fixture(t *testing.T, name string) []byte {
 }
 
 type reqOpts struct {
-	token  string
-	origin string
-	host   string
-	agent  string
-	body   []byte
-	method string
-	path   string
+	token   string
+	origin  string
+	host    string
+	agent   string
+	body    []byte
+	method  string
+	path    string
 	noBody  bool
 	tmux    string
 	tmuxWin string
@@ -535,5 +536,62 @@ func TestApprovalDecisionEmitsNoClose(t *testing.T) {
 	// Wait 已返回、响应已发完,事件列表定格:只有 approval_required。
 	if got := e.pub.eventsOfType(wire.EventApprovalClosed); len(got) != 0 {
 		t.Fatalf("决策路径不应发 close: %+v", got)
+	}
+}
+
+// TestOpenCodeApprovalRoundTrip 钉住 OpenCode 插件的审批契约：POST
+// /v1/hook/opencode 收到 PermissionRequest → 登记审批 → 决策回流时
+// 响应体是插件消费的 {"decision":"allow"}（不是 Claude 的 hookSpecificOutput）。
+func TestOpenCodeApprovalRoundTrip(t *testing.T) {
+	e := newTestEnvOpts(t, 3*time.Second, 0, func(p *Params) {
+		p.Adapters = map[wire.Agent]agent.Adapter{wire.AgentOpenCode: opencode.Adapter{}}
+	})
+
+	body := []byte(`{"session_id":"ses_oc_1","hook_event_name":"PermissionRequest",` +
+		`"tool_name":"bash","tool_use_id":"call_1","tool_input":{"command":"git push"},` +
+		`"cwd":"/tmp/proj"}`)
+
+	type result struct {
+		status int
+		body   []byte
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, b := e.do(t, reqOpts{agent: "opencode", token: testToken, body: body})
+		done <- result{resp.StatusCode, b}
+	}()
+
+	env := waitEvent(t, e.pub.ch)
+	if env.Type != wire.EventApprovalRequired {
+		t.Fatalf("事件类型 = %s, 期望 approval_required", env.Type)
+	}
+	if env.Agent != wire.AgentOpenCode || env.ApprovalID == "" {
+		t.Fatalf("审批信封不符: %+v", env)
+	}
+
+	resp, respBody := e.do(t, reqOpts{
+		path: "/v1/decisions", token: testToken,
+		body: mustJSON(t, wire.Decision{
+			V: wire.Version, Kind: wire.KindDecision, MsgID: "m1",
+			ApprovalID: env.ApprovalID, Decision: wire.DecisionAllow, TS: time.Now().Unix(),
+		}),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("决策提交失败: %d %s", resp.StatusCode, respBody)
+	}
+
+	r := <-done
+	if r.status != http.StatusOK {
+		t.Fatalf("hook 期望 200，实际 %d", r.status)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(r.body, &out); err != nil {
+		t.Fatalf("hook 输出不是 JSON: %s", r.body)
+	}
+	if out["decision"] != "allow" {
+		t.Fatalf("期望插件契约 {\"decision\":\"allow\"}，实际 %s", r.body)
+	}
+	if _, ok := out["hookSpecificOutput"]; ok {
+		t.Fatalf("OpenCode 响应不应带 Claude 的 hookSpecificOutput: %s", r.body)
 	}
 }

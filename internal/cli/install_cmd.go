@@ -14,7 +14,7 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var dir, agentsFlag, modeFlag string
 	pathsFlag(fs, &dir)
-	fs.StringVar(&agentsFlag, "agent", "claude,codex", "agents to install (comma-separated)")
+	fs.StringVar(&agentsFlag, "agent", "claude,codex", "agents to install (comma-separated: claude, codex, opencode)")
 	fs.StringVar(&modeFlag, "approval-mode", string(config.ApprovalModePermissionRequest), "approval mode: permission-request or pre-tool-use")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -59,6 +59,23 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 	}
 
 	for _, name := range agents {
+		if name == "opencode" {
+			// OpenCode 无 hooks 配置文件，安装的是全局插件文件；目录与
+			// API 形态按本机 opencode 版本选择（0.x 与 2.x 不兼容）。
+			changed, variant, path, err := installOpenCodePlugin(exe)
+			if err != nil {
+				fmt.Fprintf(stderr, "failed to install %s plugin: %v\n", name, err)
+				return 1
+			}
+			note := openCodeVariantNote(variant)
+			switch {
+			case changed:
+				fmt.Fprintf(stdout, "installed %s plugin (%s%s) -> %s\n", name, variant, note, path)
+			default:
+				fmt.Fprintf(stdout, "%s plugin already up to date (%s%s) -> %s\n", name, variant, note, path)
+			}
+			continue
+		}
 		path, err := agentConfigPath(name)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -89,7 +106,7 @@ func runUninstall(args []string, stdout, stderr io.Writer) int {
 	var dir, agentsFlag string
 	var purge bool
 	pathsFlag(fs, &dir)
-	fs.StringVar(&agentsFlag, "agent", "claude,codex", "agents to uninstall (comma-separated)")
+	fs.StringVar(&agentsFlag, "agent", "claude,codex,opencode", "agents to uninstall (comma-separated)")
 	fs.BoolVar(&purge, "purge", false, "also remove the state directory (credentials, queue, token)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -101,6 +118,21 @@ func runUninstall(args []string, stdout, stderr io.Writer) int {
 	}
 
 	for _, name := range agents {
+		if name == "opencode" {
+			changed, removed, err := uninstallOpenCodePlugin()
+			if err != nil {
+				fmt.Fprintf(stderr, "failed to uninstall %s plugin: %v\n", name, err)
+				return 1
+			}
+			if changed {
+				for _, p := range removed {
+					fmt.Fprintf(stdout, "removed %s plugin from %s\n", name, p)
+				}
+			} else {
+				fmt.Fprintf(stdout, "no devpilot-hook plugin found for %s\n", name)
+			}
+			continue
+		}
 		path, err := agentConfigPath(name)
 		if err != nil {
 			fmt.Fprintln(stderr, err)

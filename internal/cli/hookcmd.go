@@ -36,7 +36,7 @@ func runHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 0 // 绝不因为参数问题破坏 Agent
 	}
-	if fs.NArg() != 1 || (fs.Arg(0) != "claude" && fs.Arg(0) != "codex") {
+	if fs.NArg() != 1 || (fs.Arg(0) != "claude" && fs.Arg(0) != "codex" && fs.Arg(0) != "opencode") {
 		return 0
 	}
 	agentName := fs.Arg(0)

@@ -55,14 +55,14 @@ func printUsage(w io.Writer) {
 	fmt.Fprint(w, `devpilot-hook - local hook daemon for DevPilot
 
 usage:
-  devpilot-hook install    [--agent claude,codex] [--approval-mode permission-request|pre-tool-use] [--dir PATH]
-  devpilot-hook uninstall  [--agent claude,codex] [--purge] [--dir PATH]
+  devpilot-hook install    [--agent claude,codex,opencode] [--approval-mode permission-request|pre-tool-use] [--dir PATH]
+  devpilot-hook uninstall  [--agent claude,codex,opencode] [--purge] [--dir PATH]
   devpilot-hook pair       [--relay https://relay.example.com] [--no-qr] [--dir PATH]
   devpilot-hook unpair     [--dir PATH]
   devpilot-hook serve      [--dir PATH] [--foreground]
   devpilot-hook doctor     [--json] [--dir PATH]
   devpilot-hook service    install|uninstall|status [--dir PATH]
-  devpilot-hook hook       claude|codex     (invoked from agent config, reads stdin)
+  devpilot-hook hook       claude|codex|opencode   (invoked from agent config, reads stdin)
   devpilot-hook version
 `)
 }
@@ -97,10 +97,10 @@ func parseAgents(s string) ([]string, error) {
 		switch part {
 		case "":
 			continue
-		case "claude", "codex":
+		case "claude", "codex", "opencode":
 			out = append(out, part)
 		default:
-			return nil, fmt.Errorf("unknown agent: %s (only claude and codex are supported)", part)
+			return nil, fmt.Errorf("unknown agent: %s (only claude, codex and opencode are supported)", part)
 		}
 	}
 	if len(out) == 0 {

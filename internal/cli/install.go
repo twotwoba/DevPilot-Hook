@@ -204,6 +204,26 @@ func findStableExecutable() (string, error) {
 		// 保留 bin 下的符号链接本身，不要 EvalSymlinks 到 Cellar 版本目录。
 		return p, nil
 	}
+	// launchd/systemd 拉起的 serve PATH 很窄，LookPath 往往失败；
+	// argv[0] 与常见 bin 目录是同一份稳定链接的可靠兜底。
+	if p := os.Args[0]; filepath.IsAbs(p) && !isVersionedPath(p) {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, nil
+		}
+	}
+	home, _ := os.UserHomeDir()
+	for _, p := range []string{
+		"/opt/homebrew/bin/devpilot-hook",
+		"/usr/local/bin/devpilot-hook",
+		filepath.Join(home, ".local", "bin", "devpilot-hook"),
+	} {
+		if p == "" || isVersionedPath(p) {
+			continue
+		}
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, nil
+		}
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err

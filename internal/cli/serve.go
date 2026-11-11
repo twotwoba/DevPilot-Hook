@@ -17,6 +17,7 @@ import (
 	"github.com/twotwoba/DevPilot-Hook/internal/agent"
 	"github.com/twotwoba/DevPilot-Hook/internal/agent/claude"
 	"github.com/twotwoba/DevPilot-Hook/internal/agent/codex"
+	"github.com/twotwoba/DevPilot-Hook/internal/agent/opencode"
 	"github.com/twotwoba/DevPilot-Hook/internal/config"
 	"github.com/twotwoba/DevPilot-Hook/internal/event"
 	"github.com/twotwoba/DevPilot-Hook/internal/gateway"
@@ -66,8 +67,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 	reg := event.NewRegistry()
 	adapters := map[wire.Agent]agent.Adapter{
-		wire.AgentClaude: claude.Adapter{},
-		wire.AgentCodex:  codex.Adapter{},
+		wire.AgentClaude:   claude.Adapter{},
+		wire.AgentCodex:    codex.Adapter{},
+		wire.AgentOpenCode: opencode.Adapter{},
 	}
 
 	// brew 升级只换二进制、不重跑 install:hooks 文件里旧的超时(300s)会
@@ -95,18 +97,18 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 	timeout := time.Duration(cfg.ApprovalTimeout) * time.Second
 	gw, err := gateway.New(gateway.Params{
-		Addr:              fmt.Sprintf("127.0.0.1:%d", cfg.GatewayPort),
-		Token:             token,
-		DaemonID:          cfg.DaemonID,
-		ApprovalTimeout:   timeout,
-		ToolEventInterval: time.Duration(cfg.ToolEventInterval) * time.Second,
-		ApprovalMode:      config.ApprovalMode(cfg.ApprovalMode),
+		Addr:                   fmt.Sprintf("127.0.0.1:%d", cfg.GatewayPort),
+		Token:                  token,
+		DaemonID:               cfg.DaemonID,
+		ApprovalTimeout:        timeout,
+		ToolEventInterval:      time.Duration(cfg.ToolEventInterval) * time.Second,
+		ApprovalMode:           config.ApprovalMode(cfg.ApprovalMode),
 		DisableAnswerQuestions: cfg.DisableAnswerQuestions,
-		Adapters:          adapters,
-		Registry:          reg,
-		WAL:               wal,
-		Publisher:         publisher,
-		HostInfo:          hostInfo.Get,
+		Adapters:               adapters,
+		Registry:               reg,
+		WAL:                    wal,
+		Publisher:              publisher,
+		HostInfo:               hostInfo.Get,
 		ExtraStatus: func() map[string]any {
 			if relay == nil {
 				return map[string]any{"relay_configured": false}
@@ -156,18 +158,18 @@ func serveOnRandomPort(
 	timeout time.Duration, stdout, stderr io.Writer,
 ) int {
 	gw, err := gateway.New(gateway.Params{
-		Addr:              "127.0.0.1:0",
-		Token:             token,
-		DaemonID:          cfg.DaemonID,
-		ApprovalTimeout:   timeout,
-		ToolEventInterval: time.Duration(cfg.ToolEventInterval) * time.Second,
-		ApprovalMode:      config.ApprovalMode(cfg.ApprovalMode),
+		Addr:                   "127.0.0.1:0",
+		Token:                  token,
+		DaemonID:               cfg.DaemonID,
+		ApprovalTimeout:        timeout,
+		ToolEventInterval:      time.Duration(cfg.ToolEventInterval) * time.Second,
+		ApprovalMode:           config.ApprovalMode(cfg.ApprovalMode),
 		DisableAnswerQuestions: cfg.DisableAnswerQuestions,
-		Adapters:          adapters,
-		Registry:          reg,
-		WAL:               wal,
-		Publisher:         publisher,
-		HostInfo:          hostInfo.Get,
+		Adapters:               adapters,
+		Registry:               reg,
+		WAL:                    wal,
+		Publisher:              publisher,
+		HostInfo:               hostInfo.Get,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -213,7 +215,7 @@ func serveOnRandomPort(
 
 // selfHealHooks 启动时幂等重写 hooks 条目(brew 升级不重跑 install 的保险):
 // 内容与 install 产物一致,无变化时不落盘。找不到稳定可执行文件
-//(从版本目录直接运行)或目标文件损坏时只警告,不阻塞 serve。
+// (从版本目录直接运行)或目标文件损坏时只警告,不阻塞 serve。
 func selfHealHooks(cfg *config.Config, stderr io.Writer) {
 	exe, err := findStableExecutable()
 	if err != nil {
@@ -222,6 +224,18 @@ func selfHealHooks(cfg *config.Config, stderr io.Writer) {
 	}
 	mode := config.ApprovalMode(cfg.ApprovalMode)
 	for _, name := range cfg.Agents {
+		if name == "opencode" {
+			// 插件按本机 opencode 版本选择目录/API；升级 opencode 后
+			// self-heal 会自动把插件迁到正确代际。
+			changed, variant, path, err := installOpenCodePlugin(exe)
+			switch {
+			case err != nil:
+				fmt.Fprintf(stderr, "warning: opencode plugin self-heal failed: %v\n", err)
+			case changed:
+				fmt.Fprintf(stderr, "refreshed opencode plugin (%s) -> %s\n", variant, path)
+			}
+			continue
+		}
 		path, err := agentConfigPath(name)
 		if err != nil {
 			continue

@@ -61,6 +61,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	}
 
 	checks = append(checks, checkHooks("claude"), checkHooks("codex"))
+	checks = append(checks, checkOpenCodePlugin())
 	checks = append(checks, checkQueue(paths))
 
 	failed := false
@@ -169,6 +170,34 @@ func checkHooks(agentName string) checkResult {
 		return checkResult{"hooks." + agentName, "warn", "devpilot-hook entry not found in agent config"}
 	}
 	return checkResult{"hooks." + agentName, "ok", path}
+}
+
+// checkOpenCodePlugin 检查 OpenCode 全局插件文件；OpenCode 未装插件
+// 只是 warn 不 fail——opencode 是可选接入，缺席不破坏其余链路。
+// 装了但与本机 opencode 版本不匹配（0.x 读到 v2 插件或反之）同样 warn：
+// OpenCode 会静默跳过错误格式，用户只会看到「手机没反应」。
+func checkOpenCodePlugin() checkResult {
+	st := inspectOpenCodePlugin()
+	version := st.DetectedVersion
+	if version == "" {
+		version = "unknown version"
+	}
+	switch {
+	case st.Installed && st.Detected && st.InstalledVariant != st.ExpectedVariant:
+		return checkResult{"plugin.opencode", "warn", fmt.Sprintf(
+			"installed for OpenCode %s (%s) but detected %s; reinstall: devpilot-hook install --agent opencode",
+			st.InstalledVariant, st.InstalledPath, version)}
+	case st.Installed:
+		detail := st.InstalledPath
+		if st.LegacyPath != "" {
+			detail += " (stale legacy " + st.LegacyPath + ")"
+		}
+		return checkResult{"plugin.opencode", "ok", detail}
+	case st.LegacyPath != "":
+		return checkResult{"plugin.opencode", "warn", "legacy .mjs plugin is not loaded by OpenCode; reinstall: devpilot-hook install --agent opencode"}
+	default:
+		return checkResult{"plugin.opencode", "warn", "not installed (" + st.ExpectedPath + ")"}
+	}
 }
 
 func checkQueue(paths config.Paths) checkResult {
